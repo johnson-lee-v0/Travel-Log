@@ -14,6 +14,7 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
 #panel {
   width:240px; background:rgba(255,255,255,0.025); border-right:1px solid rgba(255,255,255,0.08);
   padding:24px 16px; display:flex; flex-direction:column; gap:8px; z-index:10; flex-shrink:0;
+  order:-1; /* desktop: always renders before globe even though it's last in DOM */
 }
 #panel-title {
   font-size:10px; letter-spacing:0.2em; text-transform:uppercase;
@@ -29,7 +30,7 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
 .trip-btn:hover { background:rgba(255,255,255,0.08); color:white; }
 .trip-btn.active { background:rgba(80,200,140,0.12); border-color:#50c88c; color:#50c88c; }
  
-#globeViz { flex:1; position:relative; }
+#globeViz { flex:1; position:relative; order:0; }
  
 /* ── BILLBOARD ── */
 #billboard {
@@ -37,6 +38,7 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
   background:rgba(6,10,14,0.94); border:1px solid rgba(80,200,140,0.25); border-radius:14px;
   padding:18px 20px; min-width:280px; max-width:380px; display:none; z-index:100;
   backdrop-filter:blur(16px); cursor:pointer;
+  order:1; /* desktop: sits in absolute flow so order doesn't matter, but needed for mobile */
 }
 #bb-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
 #bb-city { color:#50c88c; font-weight:500; font-size:13px; }
@@ -113,17 +115,40 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
 /* ── MOBILE (<=768px — phones and small tablets) ── */
 @media (max-width:768px) {
  
-  /* Stack vertically: globe top, chip strip bottom */
+  /* Three rows top-to-bottom: globe | billboard | trip strip */
   #app { flex-direction:column; }
  
-  /* Globe fills everything above the strip */
+  /* Globe: takes remaining space after billboard + strip */
   #globeViz { flex:1; min-height:0; }
  
-  /* Panel → horizontal scrollable chip strip pinned at bottom */
+  /* Billboard: static row — no longer floats over the globe */
+  #billboard {
+    position:static;           /* pull out of absolute flow */
+    transform:none;
+    left:auto; right:auto; bottom:auto;
+    display:none;              /* JS still toggles this */
+    width:100%;
+    min-width:0; max-width:none;
+    border-radius:0;
+    border-left:none; border-right:none; border-bottom:none;
+    border-top:1px solid rgba(80,200,140,0.2);
+    padding:14px 16px;
+    /* no backdrop-filter needed — it has its own solid background now */
+    backdrop-filter:none;
+    flex-shrink:0;
+  }
+ 
+  /* When JS sets display:block, make it behave as a block row */
+  /* (JS uses style.display = 'block', which is fine for a block-level div) */
+ 
+  /* Smaller photo stack */
+  #bb-stack { height:72px; }
+  .bb-img { width:72px; height:72px; }
+ 
+  /* Trip strip: horizontal scrollable chips pinned at very bottom */
   #panel {
     width:100%; height:auto;
     flex-direction:row; align-items:center;
-    /* padding-bottom accounts for iPhone home bar safe area */
     padding:10px 12px calc(10px + env(safe-area-inset-bottom)); gap:8px;
     border-right:none; border-top:1px solid rgba(255,255,255,0.08);
     overflow-x:auto; overflow-y:hidden; flex-shrink:0;
@@ -131,30 +156,16 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
   }
   #panel::-webkit-scrollbar { display:none; }
  
-  /* "TRIPS" label — quiet inline prefix */
+  /* "TRIPS" label */
   #panel-title { font-size:9px; margin-bottom:0; flex-shrink:0; white-space:nowrap; }
  
-  /* Pill-shaped chips */
+  /* Pill chips */
   .trip-btn {
     padding:9px 18px; border-radius:20px;
     font-size:13px; white-space:nowrap; flex-shrink:0; text-align:center;
   }
  
-  /* Billboard: full-width, sitting above the strip
-     The strip is ~58px + safe-area; we use a fixed offset that works for all iPhones */
-  #billboard {
-    position:absolute;
-    bottom:calc(68px + env(safe-area-inset-bottom));
-    left:12px; right:12px;
-    transform:none; min-width:0; max-width:none; width:auto;
-    padding:14px 16px;
-  }
- 
-  /* Smaller photo stack on narrow screens */
-  #bb-stack { height:76px; }
-  .bb-img { width:76px; height:76px; }
- 
-  /* Gallery header */
+  /* Gallery */
   #gallery-header { padding:14px 16px; }
   #gallery-name { font-size:15px; }
 }
@@ -162,13 +173,8 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
 </head>
 <body>
 <div id="app">
-  <div id="panel">
-    <div id="panel-title">TRIPS</div>
-  </div>
   <div id="globeViz"></div>
-</div>
- 
-<div id="billboard">
+  <div id="billboard">
   <div id="bb-header">
     <div id="bb-city"></div>
     <div id="bb-header-right">
@@ -181,7 +187,11 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
     <button class="bb-arrow" id="bb-prev">‹</button>
     <button class="bb-arrow" id="bb-next">›</button>
   </div>
-</div>
+  </div><!-- /#billboard -->
+  <div id="panel">
+    <div id="panel-title">TRIPS</div>
+  </div>
+</div><!-- /#app -->
  
 <div id="gallery">
   <div id="gallery-header">
@@ -337,7 +347,6 @@ function enableFreeSpin() {
   refreshAllPoints(null);
   globe.controls().autoRotate = true;
   globe.controls().autoRotateSpeed = 0.32;
-  // globe.pointOfView({ lat:35, lng:-20, altitude:2.6 }, 1200);
 }
  
 // ── BILLBOARD ─────────────────────────────────────────────────────────────────

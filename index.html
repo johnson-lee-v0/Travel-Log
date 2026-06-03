@@ -52,8 +52,15 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
   transition:all 0.15s; flex-shrink:0;
 }
 #bb-close:hover { background:rgba(255,255,255,0.18); color:white; }
-#bb-stack { position:relative; height:92px; margin:12px 0; pointer-events:none; }
-.bb-img { width:92px; height:92px; object-fit:cover; border-radius:10px; position:absolute; border:2px solid #111; }
+#bb-stack {
+  --bb-thumb-size:92px; --bb-thumb-offset:22px;
+  position:relative; height:var(--bb-thumb-size); margin:12px auto; pointer-events:none;
+}
+.bb-img {
+  width:var(--bb-thumb-size); height:var(--bb-thumb-size); object-fit:cover; border-radius:10px;
+  position:absolute; border:2px solid #111; background:linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02));
+  box-shadow:0 12px 24px rgba(0,0,0,0.28);
+}
 #bb-controls { display:flex; justify-content:center; gap:30px; margin-top:8px; }
 .bb-arrow {
   background:none; border:none; color:#50c88c; font-size:28px; cursor:pointer;
@@ -93,6 +100,7 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
 .gal-img {
   width:100%; aspect-ratio:1/1; object-fit:cover;
   display:block; cursor:zoom-in; transition:opacity 0.15s;
+  background:linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02));
 }
 .gal-img:hover { opacity:0.78; }
  
@@ -142,8 +150,7 @@ body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; ove
   /* (JS uses style.display = 'block', which is fine for a block-level div) */
  
   /* Smaller photo stack */
-  #bb-stack { height:72px; }
-  .bb-img { width:72px; height:72px; }
+  #bb-stack { --bb-thumb-size:72px; --bb-thumb-offset:18px; }
  
   /* Trip strip: horizontal scrollable chips pinned at very bottom */
   #panel {
@@ -259,14 +266,16 @@ const EXTRA_VISITED_CITIES = [
 ];
 
 const VISITED_AIRPORTS = [
+  { name:"ATL", lat:33.640,  lng:-84.4199  },
   { name:"CLE", lat:41.4075,  lng:-81.8511  },  
   { name:"HKG", lat:22.3118,  lng:113.9149  },
   { name:"ICN", lat:37.4691,  lng:126.4510  },
-  { name:"KHH", lat:22.5771,  lng:120.3499  },
+//  { name:"KHH", lat:22.5771,  lng:120.3499  },
+  { name:"HND", lat:35.5533,  lng:139.7811  },
   { name:"NRT", lat:35.7647,  lng:140.3863  },
   { name:"ORD", lat:41.977,   lng:-87.908   },
   { name:"SFO", lat:37.6188,  lng:-122.3754 },
-  { name:"TPE", lat:25.0777,  lng:121.2330  },
+//  { name:"TPE", lat:25.0777,  lng:121.2330  },
   { name:"YEG", lat:53.3097,  lng:-113.5800 },
   { name:"YUL", lat:45.4678,  lng:-73.7423  },
   { name:"YVR", lat:49.1934,  lng:-123.1751 },
@@ -276,22 +285,135 @@ const VISITED_AIRPORTS = [
 let globe;
 let currentTrip = null;
 let currentStopIndex = 0;
+
+const ROUTES = [
+  { from:"YYZ", to:"SFO" },
+  { from:"SFO", to:"YYZ" },
+  // { from:"SFO", to:"TPE" },
+  // { from:"TPE", to:"SFO" },
+  { from:"YYZ", to:"TPE" },
+  // { from:"TPE", to:"YYZ" },
+  { from:"KHH", to:"HKG" },
+  { from:"HKG", to:"KHH" },
+  { from:"YYZ", to:"HKG" },
+  { from:"HKG", to:"YYZ" },
+  { from:"YUL", to:"ATL" },
+  { from:"ATL", to:"YUL" },
+  { from:"YYZ", to:"ICN" },
+  // { from:"ICN", to:"TPE" },
+  { from:"NRT", to:"YYZ" },
+  { from:"YYZ", to:"NRT" },
+  { from:"YYZ", to:"YEG" },
+  { from:"YEG", to:"YYZ" },
+  { from:"YEG", to:"YVR" },
+  { from:"YVR", to:"YYZ" },
+  { from:"YYZ", to:"YVR" },
+  { from:"CLE", to:"ORD" },
+  { from:"CLE", to:"YYZ" },
+];
+
+function previewSrc(src) {
+  return src
+    .replace('./trip_images/', './trip_images/_previews/')
+    .replace(/\.(jpe?g|png)$/i, '.jpg');
+}
+
+function preloadPreviews(point, limit = 3) {
+  point.images.slice(0, limit).forEach(src => {
+    const img = new Image();
+    img.src = previewSrc(src);
+  });
+}
+
+function getBillboardMetrics() {
+  const stack = document.getElementById('bb-stack');
+  const styles = getComputedStyle(stack);
+  return {
+    size: parseFloat(styles.getPropertyValue('--bb-thumb-size')) || 92,
+    offset: parseFloat(styles.getPropertyValue('--bb-thumb-offset')) || 22,
+  };
+}
+
+function buildCountryFeatures() {
+  const features = [];
+  Object.keys(GEO).forEach(country => {
+    GEO[country].forEach(ring => {
+      features.push({
+        type:"Feature",
+        geometry:{ type:"Polygon", coordinates:[ring.map(p => [p[0], p[1]])] },
+        properties:{ country }
+      });
+    });
+  });
+  return features;
+}
+
+function getHubByName(name) {
+  const allHubs = [
+    ...VISITED_AIRPORTS,
+    ...EXTRA_VISITED_CITIES,
+    ...TRIPS.flatMap(trip => trip.points),
+  ];
+  return allHubs.find(hub => hub.name === name);
+}
+
+function getRouteData() {
+  return ROUTES
+    .map(route => ({ ...route, start:getHubByName(route.from), end:getHubByName(route.to) }))
+    .filter(route => route.start && route.end);
+}
+
+function getAirportLabels() {
+  return VISITED_AIRPORTS.map(airport => ({ ...airport, type:'airport-label' }));
+}
  
 // ── GLOBE INIT ────────────────────────────────────────────────────────────────
 globe = new Globe(document.getElementById('globeViz'))
   .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg')
   .backgroundColor('rgba(0,0,0,0)')
-  .hexPolygonsData([])
-  .hexPolygonResolution(3)
-  .hexPolygonMargin(0.35)
-  .hexPolygonUseDots(true)
-  .hexPolygonColor(d => d.visited ? '#dddddd' : '#555555')
-  .hexPolygonAltitude(0.008)
+  .polygonsData([])
+  .polygonAltitude(0.01)
+  .polygonCapColor(d => {
+    const shades = {
+      Canada:'rgba(225,230,226,0.16)',
+      USA:'rgba(225,230,226,0.11)',
+      Japan:'rgba(225,230,226,0.14)',
+    };
+    return shades[d.properties.country] || 'rgba(225,230,226,0.12)';
+  })
+  .polygonSideColor(() => 'rgba(225,230,226,0.04)')
+  .polygonStrokeColor(() => 'rgba(238,246,242,0.42)')
   .pointsData([])
-  .pointAltitude(0.018)
-  .pointRadius(0.32)
+  .pointAltitude(d => d.type === 'airport' ? 0.045 : 0.03)
+  .pointRadius(d => d.type === 'airport' ? 0.18 : d.type === 'trip' ? 0.34 : 0.24)
   .pointColor(d => d.color)
   .pointLabel(d => `<div style="font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;color:#fff;padding:4px 10px;background:rgba(6,10,14,0.88);border:1px solid rgba(255,255,255,0.12);border-radius:6px;white-space:nowrap;">${d.name}</div>`)
+  .labelsData([])
+  .labelLat(d => d.lat)
+  .labelLng(d => d.lng)
+  .labelText(d => d.name)
+  .labelSize(() => 0.54)
+  .labelDotRadius(() => 0)
+  .labelColor(() => 'rgba(232,237,232,0.66)')
+  .labelAltitude(() => 0.035)
+  .arcsData([])
+  .arcStartLat(d => d.start.lat)
+  .arcStartLng(d => d.start.lng)
+  .arcEndLat(d => d.end.lat)
+  .arcEndLng(d => d.end.lng)
+  .arcColor(() => ['rgba(80,200,140,0.28)', 'rgba(80,200,140,0.78)'])
+  .arcAltitude(() => 0.28)
+  .arcStroke(() => 0.65)
+  .arcDashLength(() => 0.32)
+  .arcDashGap(() => 1.4)
+  .arcDashAnimateTime(() => 4200)
+  .ringsData([])
+  .ringLat(d => d.lat)
+  .ringLng(d => d.lng)
+  .ringColor(d => d.type === 'airport' ? 'rgba(51,136,255,0.24)' : 'rgba(80,200,140,0.32)')
+  .ringMaxRadius(() => 2.2)
+  .ringPropagationSpeed(() => 0.55)
+  .ringRepeatPeriod(() => 2400)
   .onPointClick(d => {
     if (currentTrip) {
       const idx = currentTrip.points.findIndex(p => p.name === d.name);
@@ -300,18 +422,8 @@ globe = new Globe(document.getElementById('globeViz'))
   });
  
 // ── HEX POLYGONS ──────────────────────────────────────────────────────────────
-function generateHexDots() {
-  const features = [];
-  Object.keys(GEO).forEach(key => {
-    GEO[key].forEach(ring => {
-      features.push({
-        type:"Feature",
-        geometry:{ type:"Polygon", coordinates:[ring.map(p=>[p[0],p[1]])] },
-        properties:{ visited:true }
-      });
-    });
-  });
-  globe.hexPolygonsData(features);
+function generateCountryPolygons() {
+  globe.polygonsData(buildCountryFeatures());
 }
  
 // ── POINTS ────────────────────────────────────────────────────────────────────
@@ -336,6 +448,9 @@ function refreshAllPoints(activeTrip = null) {
   }
  
   globe.pointsData(points);
+  globe.labelsData(activeTrip ? [] : getAirportLabels());
+  globe.arcsData(activeTrip ? [] : getRouteData());
+  globe.ringsData(points.filter(point => point.type === 'airport'));
 }
  
 // ── FREE SPIN ─────────────────────────────────────────────────────────────────
@@ -359,12 +474,17 @@ function showBillboard() {
   const stack = document.getElementById('bb-stack');
   stack.innerHTML = '';
   const n = Math.min(5, p.images.length);
-  stack.style.width = (92 + (n-1)*22) + 'px';
+  const metrics = getBillboardMetrics();
+  stack.style.width = n ? (metrics.size + (n-1)*metrics.offset) + 'px' : '0px';
+  preloadPreviews(p);
   for (let i = 0; i < n; i++) {
     const img = document.createElement('img');
     img.className = 'bb-img';
-    img.src = p.images[i];
-    img.style.left  = (i * 22) + 'px';
+    img.src = previewSrc(p.images[i]);
+    img.alt = `${p.name} preview ${i + 1}`;
+    img.decoding = 'async';
+    img.loading = i === 0 ? 'eager' : 'lazy';
+    img.style.left  = (i * metrics.offset) + 'px';
     img.style.zIndex = n - i;
     img.style.transform = `rotate(${(i-(n-1)/2)*3.5}deg)`;
     stack.appendChild(img);
@@ -384,7 +504,9 @@ function openGallery(point) {
   point.images.forEach(src => {
     const img = document.createElement('img');
     img.className = 'gal-img';
-    img.src = src;
+    img.src = previewSrc(src);
+    img.alt = `${point.name} photo`;
+    img.decoding = 'async';
     img.loading = 'lazy';
     img.onclick = e => { e.stopPropagation(); openLightbox(src); };
     grid.appendChild(img);
@@ -467,15 +589,16 @@ TRIPS.forEach(trip => {
     refreshAllPoints(trip);
     globe.controls().autoRotate = false;
     globe.pointOfView({ lat:trip.points[0].lat, lng:trip.points[0].lng, altitude:1.75 }, 1400);
+    preloadPreviews(trip.points[0], 5);
     showBillboard();
   };
   panel.appendChild(btn);
 });
  
 // ── INIT ──────────────────────────────────────────────────────────────────────
-generateHexDots();
+generateCountryPolygons();
 refreshAllPoints(null);
-globe.pointOfView({ lat:35, lng:-20, altitude:2.6 }, 0);
+globe.pointOfView({ lat:37, lng:-60, altitude:1 }, 0);
 globe.onGlobeReady(() => {
   globe.controls().autoRotate = true;
   globe.controls().autoRotateSpeed = 0.32;

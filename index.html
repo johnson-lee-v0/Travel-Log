@@ -314,7 +314,7 @@ const ROUTES = [
 
 function previewSrc(src) {
   return src
-    .replace('./trip_images/', './trip_images/_previews/')
+    .replace('./trip_images/', './trip_images/previews/')
     .replace(/\.(jpe?g|png)$/i, '.jpg');
 }
 
@@ -598,7 +598,7 @@ TRIPS.forEach(trip => {
 // ── INIT ──────────────────────────────────────────────────────────────────────
 generateCountryPolygons();
 refreshAllPoints(null);
-globe.pointOfView({ lat:37, lng:-60, altitude:1 }, 0);
+globe.pointOfView({ lat:37, lng:-60, altitude:1.25 }, 0);
 globe.onGlobeReady(() => {
   globe.controls().autoRotate = true;
   globe.controls().autoRotateSpeed = 0.32;

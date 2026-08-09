@@ -317,6 +317,55 @@ a:focus-visible {
   touch-action: pan-y;
 }
 
+.globe-viz .float-tooltip-kap {
+  z-index: 9;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 24px));
+  padding: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  color: #edf7fb;
+  border: 1px solid rgba(143, 215, 230, 0.26);
+  border-radius: 12px;
+  background: rgba(7, 18, 27, 0.92);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.globe-tooltip {
+  display: grid;
+  gap: 5px;
+  padding: 9px 11px;
+  line-height: 1.2;
+}
+
+.globe-tooltip strong {
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+}
+
+.globe-tooltip__meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 7px;
+  color: rgba(224, 239, 245, 0.72);
+  font-size: 10.5px;
+}
+
+.globe-tooltip__meta b {
+  color: #8edcff;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.globe-tooltip__meta i {
+  color: rgba(224, 239, 245, 0.38);
+  font-style: normal;
+}
+
 .map-vignette {
   position: absolute;
   inset: 0;

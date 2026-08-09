@@ -992,7 +992,11 @@
 
   function refreshOverviewGlobe() {
     if (!state.globe) return;
-    const points = [...data.overview.cities, ...data.overview.airports].map((item) => ({
+    const points = [
+      // Visited cities remain as decluttered labels without the green cylinder markers.
+      // ...data.overview.cities,
+      ...data.overview.airports,
+    ].map((item) => ({
       ...item,
       color: markerColor(item),
     }));

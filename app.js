@@ -16,6 +16,25 @@
       end: airportsById.get(flight.to),
     }))
     .filter((flight) => flight.start && flight.end);
+  const cityLabelPriorities = new Map(
+    [
+      "toronto",
+      "tokyo",
+      "montreal",
+      "sapporo",
+      "osaka",
+      "calgary",
+      "atlanta",
+      "kitakyushu",
+      "quebec-city",
+      "sendai",
+      "cleveland",
+      "nagoya",
+      "corning",
+      "kyoto",
+      "saint-sauveur",
+    ].map((id, index, items) => [id, items.length - index]),
+  );
 
   const state = {
     viewId: data.overview.id,
@@ -24,6 +43,17 @@
     playing: false,
     resumeOnVisible: false,
     overviewRotation: true,
+    overviewLabelFrame: null,
+    overviewLabelForce: false,
+    overviewLabelSignature: "",
+    overviewLabelLastUpdateAt: 0,
+    overviewLabelView: null,
+    overviewPlaneFrame: null,
+    overviewPlaneInitFrame: null,
+    overviewPlaneInitAttempts: 0,
+    overviewPlaneLastPaintAt: 0,
+    overviewPlaneStartedAt: null,
+    overviewPlaneRuntime: null,
     mapFocus: "all",
     globe: null,
     streetMap: null,
@@ -62,6 +92,7 @@
     transportHeading: document.getElementById("transport-heading"),
     transportLegend: document.getElementById("transport-legend"),
     mapFocus: document.getElementById("map-focus"),
+    mapHeading: document.querySelector(".map-heading"),
     mapEyebrow: document.getElementById("map-eyebrow"),
     mapTitle: document.getElementById("map-title"),
     routeCard: document.getElementById("route-card"),
@@ -141,6 +172,28 @@
       "'": "&#039;",
     };
     return String(value).replace(/[&<>"']/g, (character) => replacements[character]);
+  }
+
+  function globePointTooltip(item) {
+    const kind = markerKindLabel(item);
+    if (item.kind !== "airport") {
+      return (
+        '<div class="globe-tooltip"><strong>' +
+        escapeHtml(item.name) +
+        '</strong> <span class="globe-tooltip__meta">' +
+        escapeHtml(kind) +
+        "</span></div>"
+      );
+    }
+
+    const airportName = item.name.split(" · ")[0] || item.name;
+    return (
+      '<div class="globe-tooltip"><strong>' +
+      escapeHtml(airportName) +
+      '</strong><span class="globe-tooltip__meta"><b>' +
+      escapeHtml(item.code) +
+      '</b> <i aria-hidden="true">·</i> <span>Airport</span></span></div>'
+    );
   }
 
   function renderTripTabs() {
@@ -382,6 +435,561 @@
     return Math.min(0.34, Math.max(0.08, 0.075 + span / 520));
   }
 
+  function longitudeDistance(first, second) {
+    return Math.abs((((first - second) % 360) + 540) % 360 - 180);
+  }
+
+  function globeDistanceDegrees(first, second) {
+    const toRadians = Math.PI / 180;
+    const firstLatitude = first.lat * toRadians;
+    const secondLatitude = second.lat * toRadians;
+    const latitudeDelta = (second.lat - first.lat) * toRadians;
+    const longitudeDelta = longitudeDistance(second.lng, first.lng) * toRadians;
+    const haversine =
+      Math.sin(latitudeDelta / 2) ** 2 +
+      Math.cos(firstLatitude) *
+        Math.cos(secondLatitude) *
+        Math.sin(longitudeDelta / 2) ** 2;
+    return (2 * Math.asin(Math.min(1, Math.sqrt(haversine)))) / toRadians;
+  }
+
+  function updateOverviewCityLabels(force = false) {
+    if (!state.globe || !isOverview() || elements.globe.hidden) return;
+    const globeBounds = elements.globe.getBoundingClientRect();
+    const { width, height } = globeBounds;
+    if (width < 1 || height < 1) return;
+
+    const view = state.globe.pointOfView();
+    const previousView = state.overviewLabelView;
+    if (
+      !force &&
+      previousView &&
+      Math.abs(view.lat - previousView.lat) < 2.25 &&
+      longitudeDistance(view.lng, previousView.lng) < 2.25 &&
+      Math.abs(view.altitude - previousView.altitude) < 0.04
+    ) {
+      return;
+    }
+    state.overviewLabelView = { ...view };
+
+    const compact = width < 600;
+    const closeView = view.altitude < 1.05;
+    const edgePadding = compact ? 12 : 16;
+    const maximumLabels = compact ? (closeView ? 10 : 6) : closeView ? 15 : 10;
+    const headingBounds = elements.mapHeading?.getBoundingClientRect();
+    const headingExclusion =
+      headingBounds?.width && headingBounds?.height
+        ? {
+            left: headingBounds.left - globeBounds.left - 10,
+            top: headingBounds.top - globeBounds.top - 10,
+            right: headingBounds.right - globeBounds.left + 10,
+            bottom: headingBounds.bottom - globeBounds.top + 10,
+          }
+        : null;
+    const horizon =
+      (Math.acos(1 / (1 + Math.max(0.02, view.altitude))) * 180) / Math.PI - 1.5;
+    const labelScale = Math.min(1.65, Math.max(0.85, 1.25 / (view.altitude + 0.1)));
+    const accepted = [];
+    const acceptedPositions = [];
+    const cycleOffset =
+      Math.floor(performance.now() / 6000) % Math.max(1, data.overview.cities.length);
+    const cities = data.overview.cities
+      .map((city, index) => ({
+        city,
+        distance: globeDistanceDegrees(view, city),
+        rotatingRank:
+          (index - cycleOffset + data.overview.cities.length) % data.overview.cities.length,
+      }))
+      .filter((entry) => entry.distance <= horizon)
+      .sort((first, second) => {
+        const distanceBand = Math.floor(first.distance / 1.5) - Math.floor(second.distance / 1.5);
+        if (distanceBand) return distanceBand;
+        const rotatingRank = first.rotatingRank - second.rotatingRank;
+        if (rotatingRank) return rotatingRank;
+        return (
+          (cityLabelPriorities.get(second.city.id) || 0) -
+          (cityLabelPriorities.get(first.city.id) || 0)
+        );
+      });
+
+    for (const { city } of cities) {
+      if (accepted.length >= maximumLabels) break;
+
+      const screen = state.globe.getScreenCoords(city.lat, city.lng, 0.04);
+      if (!Number.isFinite(screen?.x) || !Number.isFinite(screen?.y)) continue;
+      const halfLabelWidth =
+        Math.min(46, 4 + city.name.length * (compact ? 2 : 2.3)) * labelScale;
+      const halfLabelHeight = (compact ? 7 : 8) * labelScale;
+      if (
+        screen.x - halfLabelWidth < edgePadding ||
+        screen.x + halfLabelWidth > width - edgePadding ||
+        screen.y - halfLabelHeight < edgePadding ||
+        screen.y + halfLabelHeight > height - edgePadding
+      ) {
+        continue;
+      }
+      if (
+        headingExclusion &&
+        screen.x + halfLabelWidth > headingExclusion.left &&
+        screen.x - halfLabelWidth < headingExclusion.right &&
+        screen.y + halfLabelHeight > headingExclusion.top &&
+        screen.y - halfLabelHeight < headingExclusion.bottom
+      ) {
+        continue;
+      }
+      if (
+        acceptedPositions.some(
+          (position) =>
+            Math.abs(position.x - screen.x) <
+              position.halfWidth + halfLabelWidth + (compact ? 5 : 6) &&
+            Math.abs(position.y - screen.y) <
+              position.halfHeight + halfLabelHeight + 4,
+        )
+      ) {
+        continue;
+      }
+
+      accepted.push(city);
+      acceptedPositions.push({ ...screen, halfWidth: halfLabelWidth, halfHeight: halfLabelHeight });
+    }
+
+    const signature = accepted.map((city) => city.id).join("|");
+    if (!force && signature === state.overviewLabelSignature) return;
+    state.overviewLabelSignature = signature;
+    state.globe.labelsData(accepted);
+    elements.globe.dataset.cityLabels = String(accepted.length);
+    elements.globe.dataset.cityLabelsTotal = String(data.overview.cities.length);
+  }
+
+  function scheduleOverviewCityLabels(force = false) {
+    if (force) state.overviewLabelForce = true;
+    if (state.overviewLabelFrame !== null) return;
+    state.overviewLabelFrame = window.requestAnimationFrame((timestamp) => {
+      state.overviewLabelFrame = null;
+      const shouldForce = state.overviewLabelForce;
+      state.overviewLabelForce = false;
+      if (!shouldForce && timestamp - state.overviewLabelLastUpdateAt < 180) return;
+      state.overviewLabelLastUpdateAt = timestamp;
+      updateOverviewCityLabels(shouldForce);
+    });
+  }
+
+  function addPlaneTriangle(positions, first, second, third) {
+    positions.push(...first, ...second, ...third);
+  }
+
+  function addPlaneQuad(positions, first, second, third, fourth) {
+    addPlaneTriangle(positions, first, second, third);
+    addPlaneTriangle(positions, first, third, fourth);
+  }
+
+  function addPlanePrismXZ(positions, outline, bottom, top) {
+    for (let index = 1; index < outline.length - 1; index += 1) {
+      addPlaneTriangle(
+        positions,
+        [outline[0][0], top, outline[0][1]],
+        [outline[index][0], top, outline[index][1]],
+        [outline[index + 1][0], top, outline[index + 1][1]],
+      );
+      addPlaneTriangle(
+        positions,
+        [outline[0][0], bottom, outline[0][1]],
+        [outline[index + 1][0], bottom, outline[index + 1][1]],
+        [outline[index][0], bottom, outline[index][1]],
+      );
+    }
+    outline.forEach((point, index) => {
+      const next = outline[(index + 1) % outline.length];
+      addPlaneQuad(
+        positions,
+        [point[0], bottom, point[1]],
+        [next[0], bottom, next[1]],
+        [next[0], top, next[1]],
+        [point[0], top, point[1]],
+      );
+    });
+  }
+
+  function addPlanePrismXY(positions, outline, back, front) {
+    for (let index = 1; index < outline.length - 1; index += 1) {
+      addPlaneTriangle(
+        positions,
+        [outline[0][0], outline[0][1], front],
+        [outline[index][0], outline[index][1], front],
+        [outline[index + 1][0], outline[index + 1][1], front],
+      );
+      addPlaneTriangle(
+        positions,
+        [outline[0][0], outline[0][1], back],
+        [outline[index + 1][0], outline[index + 1][1], back],
+        [outline[index][0], outline[index][1], back],
+      );
+    }
+    outline.forEach((point, index) => {
+      const next = outline[(index + 1) % outline.length];
+      addPlaneQuad(
+        positions,
+        [point[0], point[1], back],
+        [next[0], next[1], back],
+        [next[0], next[1], front],
+        [point[0], point[1], front],
+      );
+    });
+  }
+
+  function addPlaneTube(positions, sections, centerY = 0, centerZ = 0, sides = 8) {
+    const rings = sections.map((section) =>
+      Array.from({ length: sides }, (_, index) => {
+        const angle = (index / sides) * Math.PI * 2;
+        return [
+          section.x,
+          centerY + Math.sin(angle) * section.height,
+          centerZ + Math.cos(angle) * section.width,
+        ];
+      }),
+    );
+
+    for (let sectionIndex = 0; sectionIndex < rings.length - 1; sectionIndex += 1) {
+      for (let sideIndex = 0; sideIndex < sides; sideIndex += 1) {
+        const nextSide = (sideIndex + 1) % sides;
+        addPlaneQuad(
+          positions,
+          rings[sectionIndex][sideIndex],
+          rings[sectionIndex + 1][sideIndex],
+          rings[sectionIndex + 1][nextSide],
+          rings[sectionIndex][nextSide],
+        );
+      }
+    }
+
+    const lastSectionIndex = sections.length - 1;
+    const firstCenter = [sections[0].x, centerY, centerZ];
+    const lastCenter = [sections[lastSectionIndex].x, centerY, centerZ];
+    for (let sideIndex = 0; sideIndex < sides; sideIndex += 1) {
+      const nextSide = (sideIndex + 1) % sides;
+      addPlaneTriangle(positions, firstCenter, rings[0][nextSide], rings[0][sideIndex]);
+      addPlaneTriangle(
+        positions,
+        lastCenter,
+        rings[lastSectionIndex][sideIndex],
+        rings[lastSectionIndex][nextSide],
+      );
+    }
+  }
+
+  function createOverviewPlaneGeometry(constructors) {
+    const positions = [];
+    addPlaneTube(positions, [
+      { x: 2.55, height: 0.025, width: 0.025 },
+      { x: 2.12, height: 0.14, width: 0.12 },
+      { x: 1.5, height: 0.2, width: 0.17 },
+      { x: -1.6, height: 0.19, width: 0.16 },
+      { x: -2.2, height: 0.08, width: 0.07 },
+      { x: -2.38, height: 0.035, width: 0.03 },
+    ]);
+    addPlanePrismXZ(positions, [[0.92, 0.08], [0.12, 1.58], [-0.5, 1.45], [-0.08, 0.1]], -0.055, 0.075);
+    addPlanePrismXZ(positions, [[0.92, -0.08], [-0.08, -0.1], [-0.5, -1.45], [0.12, -1.58]], -0.055, 0.075);
+    addPlanePrismXZ(positions, [[-1.42, 0.055], [-1.76, 0.72], [-2.14, 0.64], [-1.92, 0.045]], -0.025, 0.075);
+    addPlanePrismXZ(positions, [[-1.42, -0.055], [-1.92, -0.045], [-2.14, -0.64], [-1.76, -0.72]], -0.025, 0.075);
+    addPlanePrismXY(positions, [[-1.42, 0.08], [-1.8, 0.72], [-2.12, 0.64], [-2.0, 0.08]], -0.055, 0.055);
+    const engineSections = [
+      { x: 0.62, height: 0.1, width: 0.095 },
+      { x: 0.48, height: 0.12, width: 0.11 },
+      { x: -0.28, height: 0.11, width: 0.1 },
+      { x: -0.46, height: 0.065, width: 0.06 },
+    ];
+    addPlaneTube(positions, engineSections, -0.14, 0.56, 7);
+    addPlaneTube(positions, engineSections, -0.14, -0.56, 7);
+
+    const geometry = constructors.sourceGeometry.clone();
+    geometry.setIndex(null);
+    Object.keys(geometry.attributes).forEach((attribute) => geometry.deleteAttribute(attribute));
+    geometry.clearGroups();
+    geometry.morphAttributes = {};
+    const vertices = [];
+    for (let index = 0; index < positions.length; index += 3) {
+      vertices.push(
+        new constructors.Vector3(positions[index], positions[index + 1], positions[index + 2]),
+      );
+    }
+    geometry.setFromPoints(vertices);
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    geometry.name = "Low-poly passenger aircraft";
+    return geometry;
+  }
+
+  function overviewThreeConstructors(globe) {
+    // Reuse Globe.gl's bundled Three.js runtime instead of shipping a second renderer copy.
+    let sampleMesh = null;
+    globe.scene().traverse((object) => {
+      if (!sampleMesh && object.isMesh && object.geometry?.constructor) {
+        sampleMesh = object;
+      }
+    });
+    if (!sampleMesh?.constructor) return null;
+    return {
+      Matrix4: globe.scene().matrixWorld.constructor,
+      Mesh: sampleMesh.constructor,
+      sourceGeometry: sampleMesh.geometry,
+      Vector3: globe.scene().position.constructor,
+    };
+  }
+
+  function cubicPlanePoint(route, parameter, target) {
+    const inverse = 1 - parameter;
+    const firstWeight = inverse ** 3;
+    const secondWeight = 3 * inverse ** 2 * parameter;
+    const thirdWeight = 3 * inverse * parameter ** 2;
+    const fourthWeight = parameter ** 3;
+    target.set(
+      firstWeight * route.p0[0] + secondWeight * route.p1[0] + thirdWeight * route.p2[0] + fourthWeight * route.p3[0],
+      firstWeight * route.p0[1] + secondWeight * route.p1[1] + thirdWeight * route.p2[1] + fourthWeight * route.p3[1],
+      firstWeight * route.p0[2] + secondWeight * route.p1[2] + thirdWeight * route.p2[2] + fourthWeight * route.p3[2],
+    );
+    return target;
+  }
+
+  function cubicPlaneDirection(route, parameter, target) {
+    const inverse = 1 - parameter;
+    target.set(
+      3 * inverse ** 2 * (route.p1[0] - route.p0[0]) + 6 * inverse * parameter * (route.p2[0] - route.p1[0]) + 3 * parameter ** 2 * (route.p3[0] - route.p2[0]),
+      3 * inverse ** 2 * (route.p1[1] - route.p0[1]) + 6 * inverse * parameter * (route.p2[1] - route.p1[1]) + 3 * parameter ** 2 * (route.p3[1] - route.p2[1]),
+      3 * inverse ** 2 * (route.p1[2] - route.p0[2]) + 6 * inverse * parameter * (route.p2[2] - route.p1[2]) + 3 * parameter ** 2 * (route.p3[2] - route.p2[2]),
+    );
+    return target;
+  }
+
+  function planeRouteParameter(route, progress) {
+    const distances = route.distances;
+    let upperIndex = 1;
+    while (upperIndex < distances.length && distances[upperIndex] < progress) upperIndex += 1;
+    if (upperIndex >= distances.length) return 1;
+    const lowerDistance = distances[upperIndex - 1];
+    const span = distances[upperIndex] - lowerDistance || 1;
+    return (upperIndex - 1 + (progress - lowerDistance) / span) / (distances.length - 1);
+  }
+
+  function createOverviewPlaneRoutes(globe, constructors) {
+    const radius = globe.getGlobeRadius();
+    const scratchPoint = new constructors.Vector3();
+
+    return overviewFlights.map((flight, index) => {
+      const startCoordinates = globe.getCoords(flight.start.lat, flight.start.lng, 0);
+      const endCoordinates = globe.getCoords(flight.end.lat, flight.end.lng, 0);
+      const p0 = [startCoordinates.x, startCoordinates.y, startCoordinates.z];
+      const p3 = [endCoordinates.x, endCoordinates.y, endCoordinates.z];
+      const startUnit = p0.map((value) => value / radius);
+      const endUnit = p3.map((value) => value / radius);
+      const angle = Math.acos(
+        Math.max(
+          -1,
+          Math.min(
+            1,
+            startUnit[0] * endUnit[0] +
+              startUnit[1] * endUnit[1] +
+              startUnit[2] * endUnit[2],
+          ),
+        ),
+      );
+      const sineAngle = Math.sin(angle);
+      const interpolateUnit = (progress) => {
+        if (Math.abs(sineAngle) < 0.00001) {
+          const values = startUnit.map(
+            (value, component) => value + (endUnit[component] - value) * progress,
+          );
+          const length = Math.hypot(...values) || 1;
+          return values.map((value) => value / length);
+        }
+        const firstWeight = Math.sin((1 - progress) * angle) / sineAngle;
+        const secondWeight = Math.sin(progress * angle) / sineAngle;
+        return startUnit.map(
+          (value, component) => value * firstWeight + endUnit[component] * secondWeight,
+        );
+      };
+      const controlRadius = radius * (1 + flightAltitude(flight) * 1.5);
+      // Globe.gl uses these same quarter-arc cubic controls for elevated flight arcs.
+      const p1 = interpolateUnit(0.25).map((value) => value * controlRadius);
+      const p2 = interpolateUnit(0.75).map((value) => value * controlRadius);
+      const route = {
+        flight,
+        p0,
+        p1,
+        p2,
+        p3,
+        phase: (index * 0.38196601125) % 1,
+        cycleMs: Math.min(30000, Math.max(18000, 18000 + angle * 6500)),
+        distances: new Float32Array(49),
+      };
+      let totalDistance = 0;
+      let previousX = p0[0];
+      let previousY = p0[1];
+      let previousZ = p0[2];
+      for (let sampleIndex = 1; sampleIndex < route.distances.length; sampleIndex += 1) {
+        cubicPlanePoint(route, sampleIndex / (route.distances.length - 1), scratchPoint);
+        totalDistance += Math.hypot(
+          scratchPoint.x - previousX,
+          scratchPoint.y - previousY,
+          scratchPoint.z - previousZ,
+        );
+        route.distances[sampleIndex] = totalDistance;
+        previousX = scratchPoint.x;
+        previousY = scratchPoint.y;
+        previousZ = scratchPoint.z;
+      }
+      for (let sampleIndex = 1; sampleIndex < route.distances.length; sampleIndex += 1) {
+        route.distances[sampleIndex] /= totalDistance || 1;
+      }
+      return route;
+    });
+  }
+
+  function initOverviewFlightPlanes() {
+    if (!state.globe || state.overviewPlaneRuntime) return;
+    if (!isOverview() || document.hidden || elements.globe.hidden) return;
+    const constructors = overviewThreeConstructors(state.globe);
+    if (!constructors) {
+      if (state.overviewPlaneInitAttempts < 180 && state.overviewPlaneInitFrame === null) {
+        state.overviewPlaneInitAttempts += 1;
+        state.overviewPlaneInitFrame = window.requestAnimationFrame(() => {
+          state.overviewPlaneInitFrame = null;
+          initOverviewFlightPlanes();
+        });
+      } else if (state.overviewPlaneInitAttempts >= 180) {
+        console.warn("3D aircraft could not access the globe renderer.");
+      }
+      return;
+    }
+    state.overviewPlaneInitAttempts = 0;
+
+    const geometry = createOverviewPlaneGeometry(constructors);
+    const material = state.globe.globeMaterial().clone();
+    material.map = null;
+    material.bumpMap = null;
+    material.alphaMap = null;
+    material.color?.set("#eef9ff");
+    material.emissive?.set("#173845");
+    if ("emissiveIntensity" in material) material.emissiveIntensity = 0.42;
+    material.specular?.set("#d9f6ff");
+    if ("shininess" in material) material.shininess = 92;
+    material.opacity = 1;
+    material.transparent = false;
+    material.depthTest = true;
+    material.depthWrite = true;
+    material.side = 2;
+    material.needsUpdate = true;
+
+    const routes = createOverviewPlaneRoutes(state.globe, constructors);
+    const planes = routes.map((route) => {
+      const plane = new constructors.Mesh(geometry, material);
+      plane.name = "Animated 3D flight · " + route.flight.label;
+      plane.visible = false;
+      plane.renderOrder = 4;
+      plane.raycast = () => {};
+      state.globe.scene().add(plane);
+      return plane;
+    });
+    state.overviewPlaneRuntime = {
+      radius: state.globe.getGlobeRadius(),
+      routes,
+      planes,
+      position: new constructors.Vector3(),
+      forward: new constructors.Vector3(),
+      radial: new constructors.Vector3(),
+      right: new constructors.Vector3(),
+      up: new constructors.Vector3(),
+      basis: new constructors.Matrix4(),
+    };
+    elements.globe.dataset.flightModels = String(planes.length);
+    startOverviewFlightPlanes();
+  }
+
+  function paintOverviewFlightPlanes(timestamp) {
+    state.overviewPlaneFrame = null;
+    const runtime = state.overviewPlaneRuntime;
+    if (!runtime || !isOverview() || document.hidden || elements.globe.hidden) return;
+
+    const compact = elements.globe.clientWidth < 821;
+    const frameInterval = compact ? 1000 / 30 : 1000 / 40;
+    if (timestamp - state.overviewPlaneLastPaintAt >= frameInterval) {
+      state.overviewPlaneLastPaintAt = timestamp;
+      if (state.overviewPlaneStartedAt === null) state.overviewPlaneStartedAt = timestamp;
+      const elapsed = timestamp - state.overviewPlaneStartedAt;
+      const activeWindow = compact ? 0.22 : 0.28;
+      const viewAltitude = state.globe.pointOfView().altitude;
+      const modelScale =
+        Math.min(1.65, Math.max(0.98, 0.82 + viewAltitude * 0.48)) * (compact ? 0.9 : 1);
+      let activeModels = 0;
+
+      runtime.routes.forEach((route, index) => {
+        const plane = runtime.planes[index];
+        const cycleProgress = (elapsed / route.cycleMs + route.phase) % 1;
+        if (cycleProgress >= activeWindow) {
+          plane.visible = false;
+          return;
+        }
+
+        const travelProgress = cycleProgress / activeWindow;
+        const parameter = planeRouteParameter(route, travelProgress);
+        cubicPlanePoint(route, parameter, runtime.position);
+        cubicPlaneDirection(route, parameter, runtime.forward).normalize();
+        runtime.radial.copy(runtime.position).normalize();
+        runtime.right.crossVectors(runtime.forward, runtime.radial);
+        if (runtime.right.lengthSq() < 0.000001) {
+          plane.visible = false;
+          return;
+        }
+        runtime.right.normalize();
+        runtime.up.crossVectors(runtime.right, runtime.forward).normalize();
+        runtime.basis.makeBasis(runtime.forward, runtime.up, runtime.right);
+        plane.position
+          .copy(runtime.position)
+          .addScaledVector(runtime.radial, runtime.radius * 0.006);
+        plane.quaternion.setFromRotationMatrix(runtime.basis);
+        plane.scale.setScalar(modelScale);
+        plane.visible = true;
+        activeModels += 1;
+      });
+
+      if (elements.globe.dataset.activeFlightModels !== String(activeModels)) {
+        elements.globe.dataset.activeFlightModels = String(activeModels);
+      }
+    }
+
+    state.overviewPlaneFrame = window.requestAnimationFrame(paintOverviewFlightPlanes);
+  }
+
+  function startOverviewFlightPlanes() {
+    if (
+      !state.overviewPlaneRuntime ||
+      state.overviewPlaneFrame !== null ||
+      !isOverview() ||
+      document.hidden ||
+      elements.globe.hidden
+    ) {
+      return;
+    }
+    state.overviewPlaneLastPaintAt = 0;
+    state.overviewPlaneFrame = window.requestAnimationFrame(paintOverviewFlightPlanes);
+  }
+
+  function stopOverviewFlightPlanes() {
+    if (state.overviewPlaneInitFrame !== null) {
+      window.cancelAnimationFrame(state.overviewPlaneInitFrame);
+      state.overviewPlaneInitFrame = null;
+      state.overviewPlaneInitAttempts = 0;
+    }
+    if (state.overviewPlaneFrame !== null) {
+      window.cancelAnimationFrame(state.overviewPlaneFrame);
+      state.overviewPlaneFrame = null;
+    }
+    state.overviewPlaneRuntime?.planes.forEach((plane) => {
+      plane.visible = false;
+    });
+    elements.globe.dataset.activeFlightModels = "0";
+  }
+
   function refreshOverviewGlobe() {
     if (!state.globe) return;
     const points = [...data.overview.cities, ...data.overview.airports].map((item) => ({
@@ -396,11 +1004,13 @@
     }));
 
     state.globe.pointsData(points);
+    state.overviewLabelSignature = "";
     state.globe.labelsData([]);
     state.globe.arcsData(arcs);
     state.globe.pathsData([]);
     state.globe.htmlElementsData([]);
     state.globe.ringsData([]);
+    scheduleOverviewCityLabels(true);
   }
 
   function focusGlobe(view, duration = 1050) {
@@ -1127,6 +1737,8 @@
       state.globe?.resumeAnimation();
       refreshOverviewGlobe();
       applyOverviewRotation();
+      initOverviewFlightPlanes();
+      startOverviewFlightPlanes();
       if (focusInitial) focusGlobe(data.overview.initialView, 1250);
       return;
     }
@@ -1144,6 +1756,7 @@
       state.globe.controls().autoRotate = false;
       state.globe.pauseAnimation();
     }
+    stopOverviewFlightPlanes();
     if (!initStreetMap()) return;
     renderStreetTrip(trip);
     window.requestAnimationFrame(() => {
@@ -1402,23 +2015,20 @@
         .pointRadius((item) => (item.kind === "airport" ? 0.18 : 0.085))
         .pointResolution(8)
         .pointsMerge(false)
-        .pointLabel(
-          (item) =>
-            '<div class="globe-tooltip"><strong>' +
-            escapeHtml(item.name) +
-            "</strong><span>" +
-            escapeHtml(markerKindLabel(item)) +
-            "</span></div>",
-        )
+        .pointLabel(globePointTooltip)
         .onPointClick(handleOverviewPoint)
         .labelsData([])
         .labelLat("lat")
         .labelLng("lng")
-        .labelText("code")
-        .labelSize(0.46)
+        .labelText("name")
+        .labelSize(() => (elements.globe.clientWidth < 600 ? 0.68 : 0.78))
+        .labelIncludeDot(false)
         .labelDotRadius(0)
-        .labelAltitude(0.064)
-        .labelColor(() => "rgba(232,241,248,0.78)")
+        .labelAltitude(0.04)
+        .labelColor(() => "rgba(232,241,248,0.86)")
+        .labelResolution(2)
+        .labelLabel(() => "")
+        .labelsTransitionDuration(reducedMotion ? 0 : 180)
         .arcsData([])
         .arcStartLat((flight) => flight.start.lat)
         .arcStartLng((flight) => flight.start.lng)
@@ -1431,7 +2041,7 @@
         .arcDashLength(() => (reducedMotion ? 1 : 0.18))
         .arcDashGap(() => (reducedMotion ? 0 : 0.14))
         .arcDashAnimateTime(() => (reducedMotion ? 0 : 4600))
-        .arcsTransitionDuration(reducedMotion ? 0 : 620)
+        .arcsTransitionDuration(0)
         .ringsData([])
         .ringLat("lat")
         .ringLng("lng")
@@ -1439,7 +2049,9 @@
         .ringMaxRadius(1.5)
         .ringPropagationSpeed(reducedMotion ? 0 : 0.55)
         .ringRepeatPeriod(reducedMotion ? 0 : 2300)
-        .lineHoverPrecision(0.35);
+        .lineHoverPrecision(0.35)
+        .pointerEventsFilter((object) => object.__globeObjType !== "label")
+        .onZoom(() => scheduleOverviewCityLabels());
 
       state.globe = globe;
       globe.controls().enableDamping = true;
@@ -1453,7 +2065,13 @@
 
       const resize = () => {
         const { width, height } = elements.globe.getBoundingClientRect();
-        if (width > 0 && height > 0) globe.width(width).height(height);
+        if (width > 0 && height > 0) {
+          globe.width(width).height(height);
+          globe.renderer().setPixelRatio(
+            Math.min(window.devicePixelRatio || 1, width < 821 ? 1.25 : 1.55),
+          );
+          scheduleOverviewCityLabels(true);
+        }
       };
       const resizeObserver = new ResizeObserver(() => window.requestAnimationFrame(resize));
       resizeObserver.observe(elements.globe);
@@ -1463,14 +2081,20 @@
       canvas?.addEventListener("webglcontextlost", (event) => {
         event.preventDefault();
         stopPlayback();
+        stopOverviewFlightPlanes();
         showMapFallback();
       });
 
       refreshOverviewGlobe();
+      initOverviewFlightPlanes();
+      startOverviewFlightPlanes();
       applyOverviewRotation();
       globe.onGlobeReady(() => {
         focusGlobe(data.overview.initialView, 0);
+        initOverviewFlightPlanes();
+        startOverviewFlightPlanes();
         applyOverviewRotation();
+        scheduleOverviewCityLabels(true);
       });
       focusGlobe(data.overview.initialView, 0);
     } catch (error) {
@@ -1523,12 +2147,16 @@
     if (document.hidden) {
       state.resumeOnVisible = state.playing;
       stopPlayback();
+      stopOverviewFlightPlanes();
       state.globe?.pauseAnimation();
       return;
     }
     if (isOverview()) {
       state.globe?.resumeAnimation();
       applyOverviewRotation();
+      initOverviewFlightPlanes();
+      startOverviewFlightPlanes();
+      scheduleOverviewCityLabels(true);
     }
     if (state.resumeOnVisible && !isOverview()) startPlayback();
     state.resumeOnVisible = false;

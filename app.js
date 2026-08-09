@@ -23,7 +23,7 @@
     selectedStopId: null,
     playing: false,
     resumeOnVisible: false,
-    overviewRotation: !reducedMotion,
+    overviewRotation: true,
     mapFocus: "all",
     globe: null,
     streetMap: null,
@@ -371,7 +371,7 @@
     );
     state.motionMarker
       ?.getElement()
-      ?.classList.toggle("is-moving", state.playing && !reducedMotion);
+      ?.classList.toggle("is-moving", state.playing);
   }
 
   function flightAltitude(flight) {
@@ -890,7 +890,7 @@
 
   function updateMotionVehicle(progress = state.motionProgress) {
     if (!state.motionMarker || !state.motionRoute) return;
-    const displayProgress = reducedMotion ? 0.5 : Math.max(0, Math.min(1, progress));
+    const displayProgress = Math.max(0, Math.min(1, progress));
     const sample = sampleMotionRoute(state.motionRoute, displayProgress);
     state.motionMarker.setLatLng(sample.latlng);
     if (state.motionTrail) {
@@ -907,7 +907,7 @@
       );
       element.style.setProperty("--vehicle-angle", pose.angle + "deg");
       element.style.setProperty("--vehicle-direction", String(pose.direction));
-      element.classList.toggle("is-moving", state.playing && !reducedMotion);
+      element.classList.toggle("is-moving", state.playing);
     }
     elements.routeProgress.style.setProperty(
       "--motion-progress",
@@ -1005,7 +1005,7 @@
       layer.setStyle(routeStyle(item, active, Boolean(state.selectedStopId)));
       const path = layer.getElement();
       path?.classList.toggle("is-active", active);
-      path?.classList.toggle("is-playing", active && state.playing && !reducedMotion);
+      path?.classList.toggle("is-playing", active && state.playing);
       if (active) layer.bringToFront();
     });
     syncMotionVehicle(!state.selectedStopId ? leg : null);
@@ -1106,7 +1106,7 @@
   function applyOverviewRotation() {
     if (!state.globe) return;
     state.globe.controls().autoRotate =
-      isOverview() && state.overviewRotation && !reducedMotion && !document.hidden;
+      isOverview() && state.overviewRotation && !document.hidden;
     state.globe.controls().autoRotateSpeed = 0.32;
   }
 
@@ -1167,7 +1167,7 @@
     state.mapFocus = "all";
 
     if (isOverview()) {
-      state.overviewRotation = !reducedMotion;
+      state.overviewRotation = true;
     } else {
       const trip = currentTrip();
       state.activeLegIndex = Math.max(
@@ -1253,7 +1253,7 @@
 
   function startPlayback() {
     const trip = currentTrip();
-    if (reducedMotion || !trip?.legs.length) return;
+    if (!trip?.legs.length) return;
     state.selectedStopId = null;
     state.playing = true;
     renderMapFocus();
@@ -1530,7 +1530,7 @@
       state.globe?.resumeAnimation();
       applyOverviewRotation();
     }
-    if (state.resumeOnVisible && !reducedMotion && !isOverview()) startPlayback();
+    if (state.resumeOnVisible && !isOverview()) startPlayback();
     state.resumeOnVisible = false;
   });
 

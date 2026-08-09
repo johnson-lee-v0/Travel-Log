@@ -1,618 +1,142 @@
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Travel Log</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap');
-* { margin:0; padding:0; box-sizing:border-box; }
-body { background:#080c10; color:#e8ede8; font-family:'DM Sans', sans-serif; overflow:hidden; height:100dvh; }
- 
-/* ── DESKTOP LAYOUT ── */
-#app { display:flex; height:100dvh; }
- 
-#panel {
-  width:240px; background:rgba(255,255,255,0.025); border-right:1px solid rgba(255,255,255,0.08);
-  padding:24px 16px; display:flex; flex-direction:column; gap:8px; z-index:10; flex-shrink:0;
-  order:-1; /* desktop: always renders before globe even though it's last in DOM */
-}
-#panel-title {
-  font-size:10px; letter-spacing:0.2em; text-transform:uppercase;
-  color:rgba(255,255,255,0.3); margin-bottom:12px; cursor:pointer;
-}
-#panel-title:hover { color:rgba(255,255,255,0.6); }
- 
-.trip-btn {
-  padding:12px 16px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
-  border-radius:10px; cursor:pointer; transition:all 0.2s;
-  color:rgba(255,255,255,0.7); font-size:13.5px; text-align:left; font-family:'DM Sans',sans-serif;
-}
-.trip-btn:hover { background:rgba(255,255,255,0.08); color:white; }
-.trip-btn.active { background:rgba(80,200,140,0.12); border-color:#50c88c; color:#50c88c; }
- 
-#globeViz { flex:1; position:relative; order:0; }
- 
-/* ── BILLBOARD ── */
-#billboard {
-  position:absolute; bottom:32px; left:50%; transform:translateX(-50%);
-  background:rgba(6,10,14,0.94); border:1px solid rgba(80,200,140,0.25); border-radius:14px;
-  padding:18px 20px; min-width:280px; max-width:380px; display:none; z-index:100;
-  backdrop-filter:blur(16px); cursor:pointer;
-  order:1; /* desktop: sits in absolute flow so order doesn't matter, but needed for mobile */
-}
-#bb-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
-#bb-city { color:#50c88c; font-weight:500; font-size:13px; }
-#bb-header-right { display:flex; align-items:center; gap:10px; }
-#bb-count { font-size:12px; color:rgba(255,255,255,0.4); }
-#bb-close {
-  width:28px; height:28px; border-radius:50%;
-  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12);
-  color:rgba(255,255,255,0.5); font-size:13px; cursor:pointer;
-  display:flex; align-items:center; justify-content:center;
-  transition:all 0.15s; flex-shrink:0;
-}
-#bb-close:hover { background:rgba(255,255,255,0.18); color:white; }
-#bb-stack {
-  --bb-thumb-size:92px; --bb-thumb-offset:22px;
-  position:relative; height:var(--bb-thumb-size); margin:12px auto; pointer-events:none;
-}
-.bb-img {
-  width:var(--bb-thumb-size); height:var(--bb-thumb-size); object-fit:cover; border-radius:10px;
-  position:absolute; border:2px solid #111; background:linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02));
-  box-shadow:0 12px 24px rgba(0,0,0,0.28);
-}
-#bb-controls { display:flex; justify-content:center; gap:30px; margin-top:8px; }
-.bb-arrow {
-  background:none; border:none; color:#50c88c; font-size:28px; cursor:pointer;
-  padding:0 8px;
-  /* bigger tap target on mobile */
-  min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;
-}
- 
-/* ── GALLERY ── */
-#gallery {
-  position:fixed; inset:0; background:#08090c;
-  z-index:200; display:none; flex-direction:column;
-}
-#gallery-header {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0;
-}
-#gallery-title-block { display:flex; flex-direction:column; gap:3px; }
-#gallery-location { font-size:9px; font-weight:500; letter-spacing:0.18em; text-transform:uppercase; color:#50c88c; }
-#gallery-name { font-size:18px; color:rgba(255,255,255,0.9); }
-#gallery-close {
-  width:40px; height:40px; background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.6); font-size:16px;
-  border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;
-  transition:all 0.15s; flex-shrink:0;
-}
-#gallery-close:hover { background:rgba(255,255,255,0.14); color:white; }
- 
-/* ── Instagram 3-col grid ── */
-#gallery-grid {
-  flex:1; overflow-y:auto;
-  display:grid; grid-template-columns:repeat(3,1fr);
-  gap:3px; padding:3px; align-content:start;
-}
-#gallery-grid::-webkit-scrollbar { width:4px; }
-#gallery-grid::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
-.gal-img {
-  width:100%; aspect-ratio:1/1; object-fit:cover;
-  display:block; cursor:zoom-in; transition:opacity 0.15s;
-  background:linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02));
-}
-.gal-img:hover { opacity:0.78; }
- 
-/* ── LIGHTBOX ── */
-#lightbox {
-  position:fixed; inset:0; background:rgba(0,0,0,0.97);
-  z-index:300; display:none; align-items:center; justify-content:center;
-}
-#lb-img { max-width:92vw; max-height:92vh; border-radius:4px; object-fit:contain; display:block; }
-#lb-close {
-  position:fixed; top:20px; right:20px;
-  width:44px; height:44px; border-radius:50%;
-  background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2);
-  color:white; font-size:18px; cursor:pointer;
-  display:flex; align-items:center; justify-content:center;
-  transition:background 0.15s; z-index:301;
-}
-#lb-close:hover { background:rgba(255,255,255,0.22); }
- 
-/* ── MOBILE (<=768px — phones and small tablets) ── */
-@media (max-width:768px) {
- 
-  /* Three rows top-to-bottom: globe | billboard | trip strip */
-  #app { flex-direction:column; }
- 
-  /* Globe: takes remaining space after billboard + strip */
-  #globeViz { flex:1; min-height:0; }
- 
-  /* Billboard: static row — no longer floats over the globe */
-  #billboard {
-    position:static;           /* pull out of absolute flow */
-    transform:none;
-    left:auto; right:auto; bottom:auto;
-    display:none;              /* JS still toggles this */
-    width:100%;
-    min-width:0; max-width:none;
-    border-radius:0;
-    border-left:none; border-right:none; border-bottom:none;
-    border-top:1px solid rgba(80,200,140,0.2);
-    padding:14px 16px;
-    /* no backdrop-filter needed — it has its own solid background now */
-    backdrop-filter:none;
-    flex-shrink:0;
-  }
- 
-  /* When JS sets display:block, make it behave as a block row */
-  /* (JS uses style.display = 'block', which is fine for a block-level div) */
- 
-  /* Smaller photo stack */
-  #bb-stack { --bb-thumb-size:72px; --bb-thumb-offset:18px; }
- 
-  /* Trip strip: horizontal scrollable chips pinned at very bottom */
-  #panel {
-    width:100%; height:auto;
-    flex-direction:row; align-items:center;
-    padding:10px 12px calc(10px + env(safe-area-inset-bottom)); gap:8px;
-    border-right:none; border-top:1px solid rgba(255,255,255,0.08);
-    overflow-x:auto; overflow-y:hidden; flex-shrink:0;
-    scrollbar-width:none; -webkit-overflow-scrolling:touch;
-  }
-  #panel::-webkit-scrollbar { display:none; }
- 
-  /* "TRIPS" label */
-  #panel-title { font-size:9px; margin-bottom:0; flex-shrink:0; white-space:nowrap; }
- 
-  /* Pill chips */
-  .trip-btn {
-    padding:9px 18px; border-radius:20px;
-    font-size:13px; white-space:nowrap; flex-shrink:0; text-align:center;
-  }
- 
-  /* Gallery */
-  #gallery-header { padding:14px 16px; }
-  #gallery-name { font-size:15px; }
-}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#071019">
+  <meta
+    name="description"
+    content="An interactive travel log showing places and transport routes across Japan and Canada."
+  >
+  <title>Travel Log · Personal Atlas</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="./styles.css?v=20260809-4">
+  <script defer src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
+  <script
+    defer
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script defer src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script defer src="./trip_routes/Japan_2026/rail-shapes.js?v=20260809-4"></script>
+  <script defer src="./data.js?v=20260809-4"></script>
+  <script defer src="./app.js?v=20260809-4"></script>
 </head>
 <body>
-<div id="app">
-  <div id="globeViz"></div>
-  <div id="billboard">
-  <div id="bb-header">
-    <div id="bb-city"></div>
-    <div id="bb-header-right">
-      <div id="bb-count"></div>
-      <button id="bb-close" title="Close & resume spin">✕</button>
-    </div>
+  <a class="skip-link" href="#map-stage">Skip to map</a>
+
+  <div class="app-shell" id="app">
+    <aside class="sidebar" aria-label="Travel log controls">
+      <button class="brand brand-button" id="brand-home" type="button" aria-label="Return to the travel overview">
+        <div class="brand__mark" aria-hidden="true">JL</div>
+        <div>
+          <p class="eyebrow">Personal atlas</p>
+          <p class="brand__name">Travel Log</p>
+        </div>
+      </button>
+
+      <nav class="trip-tabs" id="trip-tabs" aria-label="Choose a trip"></nav>
+
+      <section class="trip-summary" aria-labelledby="trip-title">
+        <div class="trip-summary__heading">
+          <div>
+            <p class="eyebrow" id="trip-eyebrow"></p>
+            <h1 id="trip-title"></h1>
+          </div>
+          <span class="status-pill" id="trip-status"></span>
+        </div>
+        <p class="trip-summary__copy" id="trip-description"></p>
+      </section>
+
+      <section class="transport-legend" aria-labelledby="transport-heading">
+        <div class="section-heading">
+          <h2 id="transport-heading">Transport</h2>
+          <span>Lines shown on the map</span>
+        </div>
+        <div class="legend-list" id="transport-legend"></div>
+      </section>
+    </aside>
+
+    <main class="map-stage is-overview" id="map-stage" aria-label="Interactive travel map">
+      <div class="map-vignette" aria-hidden="true"></div>
+      <div
+        id="globe-viz"
+        class="globe-viz"
+        role="img"
+        aria-label="Auto-rotating globe showing visited airports and journeys"
+      ></div>
+      <div
+        id="street-map"
+        class="street-map"
+        role="region"
+        aria-label="Street map showing the selected trip's saved places and transport routes"
+        hidden
+      ></div>
+
+      <div class="map-fallback" id="map-fallback" hidden>
+        <p class="eyebrow">Map unavailable</p>
+        <h2>The map could not load.</h2>
+        <p>Try refreshing the page when the connection is available.</p>
+      </div>
+
+      <div class="map-heading" aria-hidden="true">
+        <p class="eyebrow" id="map-eyebrow"></p>
+        <p class="map-heading__title" id="map-title"></p>
+      </div>
+
+      <div class="map-focus" id="map-focus" role="group" aria-label="Map focus"></div>
+
+      <article class="route-card" id="route-card" aria-live="polite">
+        <div class="route-progress" aria-hidden="true">
+          <span id="route-progress-fill"></span>
+        </div>
+        <div class="route-card__meta">
+          <span class="mode-chip" id="route-mode"></span>
+          <span id="route-step"></span>
+        </div>
+        <h2 id="route-title"></h2>
+        <p id="route-detail"></p>
+        <p class="route-card__note" id="route-note"></p>
+        <div class="route-controls" id="route-controls">
+          <button type="button" id="route-prev" aria-label="Previous route">←</button>
+          <button class="route-play" type="button" id="route-play" aria-label="Play route animation">
+            <span id="route-play-icon" aria-hidden="true">▶</span>
+            <span id="route-play-label">Play route</span>
+          </button>
+          <button type="button" id="route-next" aria-label="Next route">→</button>
+        </div>
+      </article>
+    </main>
   </div>
-  <div id="bb-stack"></div>
-  <div id="bb-controls">
-    <button class="bb-arrow" id="bb-prev">‹</button>
-    <button class="bb-arrow" id="bb-next">›</button>
+
+  <section class="gallery" id="gallery" role="dialog" aria-modal="true" aria-labelledby="gallery-title" hidden>
+    <header class="gallery__header">
+      <div>
+        <p class="eyebrow" id="gallery-kicker">Photo gallery</p>
+        <h2 id="gallery-title"></h2>
+      </div>
+      <button class="round-button" id="gallery-close" type="button" aria-label="Close gallery">×</button>
+    </header>
+    <div class="gallery__grid" id="gallery-grid"></div>
+  </section>
+
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" hidden>
+    <button class="round-button lightbox__close" id="lightbox-close" type="button" aria-label="Close photo">×</button>
+    <img id="lightbox-image" src="" alt="">
   </div>
-  </div><!-- /#billboard -->
-  <div id="panel">
-    <div id="panel-title">TRIPS</div>
-  </div>
-</div><!-- /#app -->
- 
-<div id="gallery">
-  <div id="gallery-header">
-    <div id="gallery-title-block">
-      <div id="gallery-location">Photo Gallery</div>
-      <div id="gallery-name"></div>
-    </div>
-    <button id="gallery-close">✕</button>
-  </div>
-  <div id="gallery-grid"></div>
-</div>
- 
-<div id="lightbox">
-  <button id="lb-close">✕</button>
-  <img id="lb-img" src="" alt="">
-</div>
- 
-<script src="https://cdn.jsdelivr.net/npm/globe.gl@2"></script>
-<script>
-const GEO = {
-  Canada:[
-    [[-122.839,49],[-124.909,49.985],[-125.625,50.417],[-127.436,50.83],[-127.85,52.329],[-129.131,52.756],[-129.304,53.562],[-130.514,54.288],[-130.536,54.802],[-129.981,55.285],[-130.006,55.916],[-131.709,56.552],[-132.732,57.693],[-133.354,58.411],[-134.272,58.861],[-134.946,59.271],[-135.475,59.789],[-136.479,59.464],[-137.451,58.905],[-138.34,59.562],[-140.014,60.278],[-140.997,60.306],[-140.986,69.712],[-139.122,69.472],[-135.626,69.316],[-131.432,69.944],[-128.361,70.013],[-125.755,69.48],[-123.062,69.563],[-119.944,69.379],[-115.246,68.906],[-113.497,67.688],[-108.881,67.381],[-108.168,68.654],[-105.342,68.561],[-101.454,67.647],[-98.56,68.404],[-96.126,67.293],[-94.233,69.069],[-96.393,71.195],[-92.879,71.318],[-90.546,69.497],[-88.019,68.615],[-86.305,67.921],[-84.102,69.805],[-81.219,68.666],[-81.388,67.111],[-85.769,66.559],[-87.324,64.775],[-90.705,63.61],[-93.156,62.024],[-94.686,58.949],[-92.296,57.087],[-88.041,56.471],[-85.013,55.303],[-82.435,54.283],[-79.912,51.209],[-79.123,54.142],[-77.097,55.838],[-77.773,60.758],[-75.696,62.278],[-72.91,62.106],[-69.59,61.061],[-68.374,58.802],[-65.245,59.871],[-62.502,58.167],[-60.468,55.775],[-57.332,54.626],[-55.756,53.27],[-57.127,51.421],[-61.724,50.08],[-66.397,50.229],[-69.954,47.744],[-71.405,45.255],[-74.868,45.001],[-76.499,44.019],[-78.72,43.625],[-78.922,42.964],[-81.276,42.21],[-83.029,41.832],[-82.9,42.43],[-82.338,44.44],[-83.469,45.994],[-84.091,46.275],[-84.606,46.439],[-84.876,46.9],[-87.439,47.941],[-89.599,48.01],[-92.609,48.45],[-94.64,48.839],[-95.158,49],[-104.05,49],[-113,49],[-119.998,49],[-122.839,49]],
-    [[-78.771,72.352],[-75.606,72.244],[-74.098,71.33],[-71.2,70.92],[-68.788,70.524],[-66.97,69.186],[-68.806,68.72],[-64.864,67.847],[-61.85,66.862],[-63.917,64.998],[-65.148,65.426],[-66.388,66.388],[-68.014,66.263],[-65.731,64.648],[-65.015,62.674],[-66.275,62.945],[-68.784,63.746],[-66.329,62.28],[-68.878,62.331],[-71.023,62.911],[-73.378,64.194],[-74.836,64.678],[-77.709,64.23],[-78.555,64.573],[-76.017,65.327],[-73.947,66.31],[-72.651,67.285],[-73.313,68.07],[-74.843,68.554],[-76.87,68.894],[-77.287,69.77],[-78.958,70.167],[-81.305,69.742],[-84.945,69.966],[-88.681,70.411],[-89.513,70.761],[-89.887,71.222],[-90.204,72.236],[-89.437,73.129],[-85.827,73.805],[-84.851,73.341],[-82.317,73.75],[-80.599,72.716],[-78.771,72.352]],
-    [[-91.587,81.895],[-88.933,82.117],[-85.499,82.652],[-83.181,82.32],[-81.1,83.021],[-76.251,83.171],[-72.831,83.234],[-68.5,83.107],[-63.679,82.9],[-61.894,82.362],[-64.334,81.927],[-66.754,81.726],[-65.479,81.506],[-67.841,80.9],[-71.182,79.8],[-73.882,79.431],[-76.909,79.322],[-76.222,79.019],[-75.394,78.525],[-77.889,77.901],[-79.761,77.21],[-79.62,76.983],[-77.889,76.778],[-80.56,76.178],[-83.173,76.453],[-87.601,76.42],[-89.491,76.472],[-87.767,77.178],[-88.26,77.901],[-84.977,77.538],[-85.38,78.997],[-86.507,79.737],[-84.199,80.208],[-81.849,80.465],[-87.598,80.516],[-89.365,80.856],[-91.367,81.553],[-91.587,81.895]],
-    [[-106.523,73.077],[-104.774,71.699],[-102.786,70.497],[-100.979,70.025],[-102.732,69.504],[-104.241,68.91],[-107.121,69.12],[-111.535,68.63],[-113.857,69.008],[-115.221,69.28],[-117.341,69.961],[-116.488,70.521],[-118.432,70.909],[-117.655,71.295],[-119.401,71.559],[-118.562,72.308],[-115.189,73.314],[-114.667,72.652],[-112.442,72.955],[-109.007,72.633],[-107.686,72.065],[-108.395,73.09],[-107.517,73.236],[-106.523,73.077]],
-    [[-88.149,74.392],[-92.422,74.837],[-92.89,75.883],[-93.894,76.32],[-97.12,76.751],[-96.746,77.161],[-93.574,76.777],[-90.741,76.45],[-89.823,75.848],[-87.839,75.567],[-84.79,75.699],[-81.129,75.714],[-79.833,74.923],[-81.949,74.443],[-86.097,74.411],[-88.149,74.392]],
-    [[-121.539,74.449],[-117.557,74.185],[-115.513,73.475],[-119.221,72.52],[-123.091,70.902],[-125.927,71.868],[-124.808,73.023],[-124.919,74.292],[-121.539,74.449]],
-    [[-55.601,51.317],[-56.796,49.813],[-54.935,49.313],[-52.958,48.157],[-53.07,46.656],[-54.179,46.807],[-55.399,46.884],[-55.997,46.92],[-56.252,47.633],[-59.266,47.604],[-57.358,50.718],[-56.738,51.287],[-55.601,51.317]],
-  ],
-  Japan:[
-    [[141.883,39.182],[140.961,38.175],[140.976,37.142],[140.601,36.343],[140.774,35.842],[140.252,35.138],[138.974,34.668],[137.217,34.607],[135.792,33.464],[135.122,33.848],[135.079,34.596],[133.34,34.376],[132.156,33.904],[130.986,33.886],[132.001,33.149],[131.331,31.45],[130.687,31.03],[130.201,31.418],[130.449,32.32],[129.815,32.611],[129.409,33.297],[130.356,33.605],[130.878,34.233],[131.886,34.75],[132.616,35.433],[134.607,35.732],[135.676,35.527],[136.724,37.305],[137.39,36.827],[138.859,37.828],[139.428,38.215],[140.054,39.439],[139.885,40.563],[140.306,41.196],[141.368,41.379],[141.915,39.992],[141.883,39.182]],
-    [[144.612,43.961],[145.321,44.385],[145.544,43.262],[144.061,42.988],[143.182,41.995],[141.613,42.678],[141.066,41.585],[139.957,41.57],[139.816,42.563],[140.313,43.333],[141.379,43.389],[141.67,44.772],[141.969,45.551],[143.143,44.51],[143.91,44.175],[144.612,43.961]],
-    [[132.372,33.464],[132.926,34.06],[133.495,33.945],[133.905,34.365],[134.64,34.15],[134.766,33.806],[134.204,33.202],[133.794,33.522],[133.279,33.29],[133.016,32.704],[132.364,32.989],[132.372,33.464]],
-  ],
-  USA:[[[-94.81758,49.38905],[-94.64,48.84],[-94.32914,48.67074],[-93.63087,48.60926],[-92.61,48.45],[-91.64,48.14],[-90.83,48.27],[-89.6,48.01],[-89.272917,48.019808],[-88.378114,48.302918],[-87.439793,47.94],[-86.461991,47.553338],[-85.652363,47.220219],[-84.87608,46.900083],[-84.779238,46.637102],[-84.543749,46.538684],[-84.6049,46.4396],[-84.3367,46.40877],[-84.14212,46.512226],[-84.091851,46.275419],[-83.890765,46.116927],[-83.616131,46.116927],[-83.469551,45.994686],[-83.592851,45.816894],[-82.550925,45.347517],[-82.337763,44.44],[-82.137642,43.571088],[-82.43,42.98],[-82.9,42.43],[-83.12,42.08],[-83.142,41.975681],[-83.02981,41.832796],[-82.690089,41.675105],[-82.439278,41.675105],[-81.277747,42.209026],[-80.247448,42.3662],[-78.939362,42.863611],[-78.92,42.965],[-79.01,43.27],[-79.171674,43.466339],[-78.72028,43.625089],[-77.737885,43.629056],[-76.820034,43.628784],[-76.5,44.018459],[-76.375,44.09631],[-75.31821,44.81645],[-74.867,45.00048],[-73.34783,45.00738],[-71.50506,45.0082],[-71.405,45.255],[-71.08482,45.30524],[-70.66,45.46],[-70.305,45.915],[-69.99997,46.69307],[-69.237216,47.447781],[-68.905,47.185],[-68.23444,47.35486],[-67.79046,47.06636],[-67.79134,45.70281],[-67.13741,45.13753],[-66.96466,44.8097],[-68.03252,44.3252],[-69.06,43.98],[-70.11617,43.68405],[-70.645476,43.090238],[-70.81489,42.8653],[-70.825,42.335],[-70.495,41.805],[-70.08,41.78],[-70.185,42.145],[-69.88497,41.92283],[-69.96503,41.63717],[-70.64,41.475],[-71.12039,41.49445],[-71.86,41.32],[-72.295,41.27],[-72.87643,41.22065],[-73.71,40.931102],[-72.24126,41.11948],[-71.945,40.93],[-73.345,40.63],[-73.982,40.628],[-73.952325,40.75075],[-74.25671,40.47351],[-73.96244,40.42763],[-74.17838,39.70926],[-74.90604,38.93954],[-74.98041,39.1964],[-75.20002,39.24845],[-75.52805,39.4985],[-75.32,38.96],[-75.071835,38.782032],[-75.05673,38.40412],[-75.37747,38.01551],[-75.94023,37.21689],[-76.03127,37.2566],[-75.72205,37.93705],[-76.23287,38.319215],[-76.35,39.15],[-76.542725,38.717615],[-76.32933,38.08326],[-76.989998,38.239992],[-76.30162,37.917945],[-76.25874,36.9664],[-75.9718,36.89726],[-75.86804,36.55125],[-75.72749,35.55074],[-76.36318,34.80854],[-77.397635,34.51201],[-78.05496,33.92547],[-78.55435,33.86133],[-79.06067,33.49395],[-79.20357,33.15839],[-80.301325,32.509355],[-80.86498,32.0333],[-81.33629,31.44049],[-81.49042,30.72999],[-81.31371,30.03552],[-80.98,29.18],[-80.535585,28.47213],[-80.53,28.04],[-80.056539,26.88],[-80.088015,26.205765],[-80.13156,25.816775],[-80.38103,25.20616],[-80.68,25.08],[-81.17213,25.20126],[-81.33,25.64],[-81.71,25.87],[-82.24,26.73],[-82.70515,27.49504],[-82.85526,27.88624],[-82.65,28.55],[-82.93,29.1],[-83.70959,29.93656],[-84.1,30.09],[-85.10882,29.63615],[-85.28784,29.68612],[-85.7731,30.15261],[-86.4,30.4],[-87.53036,30.27433],[-88.41782,30.3849],[-89.18049,30.31598],[-89.593831,30.159994],[-89.413735,29.89419],[-89.43,29.48864],[-89.21767,29.29108],[-89.40823,29.15961],[-89.77928,29.30714],[-90.15463,29.11743],[-90.880225,29.148535],[-91.626785,29.677],[-92.49906,29.5523],[-93.22637,29.78375],[-93.84842,29.71363],[-94.69,29.48],[-95.60026,28.73863],[-96.59404,28.30748],[-97.14,27.83],[-97.37,27.38],[-97.38,26.69],[-97.33,26.21],[-97.14,25.87],[-97.53,25.84],[-98.24,26.06],[-99.02,26.37],[-99.3,26.84],[-99.52,27.54],[-100.11,28.11],[-100.45584,28.69612],[-100.9576,29.38071],[-101.6624,29.7793],[-102.48,29.76],[-103.11,28.97],[-103.94,29.27],[-104.45697,29.57196],[-104.70575,30.12173],[-105.03737,30.64402],[-105.63159,31.08383],[-106.1429,31.39995],[-106.50759,31.75452],[-108.24,31.754854],[-108.24194,31.34222],[-109.035,31.34194],[-111.02361,31.33472],[-113.30498,32.03914],[-114.815,32.52528],[-114.72139,32.72083],[-115.99135,32.61239],[-117.12776,32.53534],[-117.295938,33.046225],[-117.944,33.621236],[-118.410602,33.740909],[-118.519895,34.027782],[-119.081,34.078],[-119.438841,34.348477],[-120.36778,34.44711],[-120.62286,34.60855],[-120.74433,35.15686],[-121.71457,36.16153],[-122.54747,37.55176],[-122.51201,37.78339],[-122.95319,38.11371],[-123.7272,38.95166],[-123.86517,39.76699],[-124.39807,40.3132],[-124.17886,41.14202],[-124.2137,41.99964],[-124.53284,42.76599],[-124.14214,43.70838],[-124.020535,44.615895],[-123.89893,45.52341],[-124.079635,46.86475],[-124.39567,47.72017],[-124.68721,48.184433],[-124.566101,48.379715],[-123.12,48.04],[-122.58736,47.096],[-122.34,47.36],[-122.5,48.18],[-122.84,49.0],[-120.0,49.0],[-117.03121,49.0],[-116.04818,49.0],[-113.0,49.0],[-110.05,49.0],[-107.05,49.0],[-104.04826,48.99986],[-100.65,49.0],[-97.22872,49.0007],[-95.15907,49.0],[-95.15609,49.38425],[-94.81758,49.38905]]],
-};
 
-const TRIPS = [
-  { name:"Japan 2026 (Upcoming)", points:[
-    { name:"Tokyo",    lat:35.689,      lng:139.692,     images:[] },
-    { name:"Nagoya",   lat:35.1815,     lng:136.9066,    images:[] },
-    { name:"Osaka",   lat:34.6723,     lng:135.4848,    images:[] },
-    { name:"Kyoto",   lat:35.01166,     lng:135.7683,    images:[] },
-    { name:"Fukuoka",  lat:33.583332,   lng:130.3999,  images:[] },
-  ]},
-  { name:"Quebec 2026", points:[
-    { name:"Montréal",      lat:45.508,  lng:-73.554,   images:["./trip_images/Quebec_2026/montreal/old_port.jpg","./trip_images/Quebec_2026/montreal/the_ring.jpg"] },
-    { name:"Saint-Sauveur", lat:45.8957, lng:-74.1531,  images:["./trip_images/Quebec_2026/saint_sauveur/billboard.jpeg","./trip_images/Quebec_2026/saint_sauveur/lift.jpg"] },
-  ]},
-  { name:"Edmonton 2025", points:[
-    { name:"Edmonton", lat:53.5461, lng:-113.4938, images:["./trip_images/Edmonton_2025/temperature.PNG","./trip_images/Edmonton_2025/deer.jpg"] },
-  ]},
-  { name:"Quebec 2025", points:[
-    { name:"Montréal",    lat:45.508,  lng:-73.554,  images:["./trip_images/Quebec_2025/montreal/the_ring.jpeg","./trip_images/Quebec_2025/montreal/amphitrite.jpeg","./trip_images/Quebec_2025/montreal/monarque.jpeg","./trip_images/Quebec_2025/montreal/mount_royal_chalet.jpeg","./trip_images/Quebec_2025/montreal/old_port.jpeg","./trip_images/Quebec_2025/montreal/oratory.jpeg"] },
-    { name:"Quebec City", lat:46.8139, lng:-71.2080, images:["./trip_images/Quebec_2025/quebec_city/fairmount_frontenac_day.jpeg","./trip_images/Quebec_2025/quebec_city/rue_du_petit-champlain.jpeg","./trip_images/Quebec_2025/quebec_city/fairmount_frontenac_night.jpeg"] },
-  ]},
-];
-
-const EXTRA_VISITED_CITIES = [
-  { name:"Atlanta",   lat:33.7490,  lng:-84.3880  },
-  { name:"Calgary",   lat:51.0499,  lng:-114.0666 },
-  { name:"Cleveland", lat:41.4993,  lng:-81.6944  },
-  { name:"Corning",   lat:42.1429,  lng:-77.054   },
-  { name:"Toronto",   lat:43.6532,  lng:-79.3832  },
-];
-
-const VISITED_AIRPORTS = [
-  { name:"ATL", lat:33.640,  lng:-84.4199  },
-  { name:"CLE", lat:41.4075,  lng:-81.8511  },  
-  { name:"HKG", lat:22.3118,  lng:113.9149  },
-  { name:"ICN", lat:37.4691,  lng:126.4510  },
-//  { name:"KHH", lat:22.5771,  lng:120.3499  },
-  { name:"HND", lat:35.5533,  lng:139.7811  },
-  { name:"NRT", lat:35.7647,  lng:140.3863  },
-  { name:"ORD", lat:41.977,   lng:-87.908   },
-  { name:"SFO", lat:37.6188,  lng:-122.3754 },
-//  { name:"TPE", lat:25.0777,  lng:121.2330  },
-  { name:"YEG", lat:53.3097,  lng:-113.5800 },
-  { name:"YUL", lat:45.4678,  lng:-73.7423  },
-  { name:"YVR", lat:49.1934,  lng:-123.1751 },
-  { name:"YYZ", lat:43.6798,  lng:-79.6284  },
-];
-
-let globe;
-let currentTrip = null;
-let currentStopIndex = 0;
-
-const ROUTES = [
-  { from:"YYZ", to:"SFO" },
-  { from:"SFO", to:"YYZ" },
-  // { from:"SFO", to:"TPE" },
-  // { from:"TPE", to:"SFO" },
-  { from:"YYZ", to:"TPE" },
-  // { from:"TPE", to:"YYZ" },
-  { from:"KHH", to:"HKG" },
-  { from:"HKG", to:"KHH" },
-  { from:"YYZ", to:"HKG" },
-  { from:"HKG", to:"YYZ" },
-  { from:"YUL", to:"ATL" },
-  { from:"ATL", to:"YUL" },
-  { from:"YYZ", to:"ICN" },
-  // { from:"ICN", to:"TPE" },
-  { from:"NRT", to:"YYZ" },
-  { from:"YYZ", to:"NRT" },
-  { from:"YYZ", to:"YEG" },
-  { from:"YEG", to:"YYZ" },
-  { from:"YEG", to:"YVR" },
-  { from:"YVR", to:"YYZ" },
-  { from:"YYZ", to:"YVR" },
-  { from:"CLE", to:"ORD" },
-  { from:"CLE", to:"YYZ" },
-];
-
-function previewSrc(src) {
-  return src
-    .replace('./trip_images/', './trip_images/previews/')
-    .replace(/\.(jpe?g|png)$/i, '.jpg');
-}
-
-function preloadPreviews(point, limit = 3) {
-  point.images.slice(0, limit).forEach(src => {
-    const img = new Image();
-    img.src = previewSrc(src);
-  });
-}
-
-function getBillboardMetrics() {
-  const stack = document.getElementById('bb-stack');
-  const styles = getComputedStyle(stack);
-  return {
-    size: parseFloat(styles.getPropertyValue('--bb-thumb-size')) || 92,
-    offset: parseFloat(styles.getPropertyValue('--bb-thumb-offset')) || 22,
-  };
-}
-
-function buildCountryFeatures() {
-  const features = [];
-  Object.keys(GEO).forEach(country => {
-    GEO[country].forEach(ring => {
-      features.push({
-        type:"Feature",
-        geometry:{ type:"Polygon", coordinates:[ring.map(p => [p[0], p[1]])] },
-        properties:{ country }
-      });
-    });
-  });
-  return features;
-}
-
-function getHubByName(name) {
-  const allHubs = [
-    ...VISITED_AIRPORTS,
-    ...EXTRA_VISITED_CITIES,
-    ...TRIPS.flatMap(trip => trip.points),
-  ];
-  return allHubs.find(hub => hub.name === name);
-}
-
-function getRouteData() {
-  return ROUTES
-    .map(route => ({ ...route, start:getHubByName(route.from), end:getHubByName(route.to) }))
-    .filter(route => route.start && route.end);
-}
-
-function getAirportLabels() {
-  return VISITED_AIRPORTS.map(airport => ({ ...airport, type:'airport-label' }));
-}
- 
-// ── GLOBE INIT ────────────────────────────────────────────────────────────────
-globe = new Globe(document.getElementById('globeViz'))
-  .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg')
-  .backgroundColor('rgba(0,0,0,0)')
-  .polygonsData([])
-  .polygonAltitude(0.01)
-  .polygonCapColor(d => {
-    const shades = {
-      Canada:'rgba(225,230,226,0.16)',
-      USA:'rgba(225,230,226,0.11)',
-      Japan:'rgba(225,230,226,0.14)',
-    };
-    return shades[d.properties.country] || 'rgba(225,230,226,0.12)';
-  })
-  .polygonSideColor(() => 'rgba(225,230,226,0.04)')
-  .polygonStrokeColor(() => 'rgba(238,246,242,0.42)')
-  .pointsData([])
-  .pointAltitude(d => d.type === 'airport' ? 0.045 : 0.03)
-  .pointRadius(d => d.type === 'airport' ? 0.18 : d.type === 'trip' ? 0.34 : 0.24)
-  .pointColor(d => d.color)
-  .pointLabel(d => `<div style="font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;color:#fff;padding:4px 10px;background:rgba(6,10,14,0.88);border:1px solid rgba(255,255,255,0.12);border-radius:6px;white-space:nowrap;">${d.name}</div>`)
-  .labelsData([])
-  .labelLat(d => d.lat)
-  .labelLng(d => d.lng)
-  .labelText(d => d.name)
-  .labelSize(() => 0.54)
-  .labelDotRadius(() => 0)
-  .labelColor(() => 'rgba(232,237,232,0.66)')
-  .labelAltitude(() => 0.035)
-  .arcsData([])
-  .arcStartLat(d => d.start.lat)
-  .arcStartLng(d => d.start.lng)
-  .arcEndLat(d => d.end.lat)
-  .arcEndLng(d => d.end.lng)
-  .arcColor(() => ['rgba(80,200,140,0.28)', 'rgba(80,200,140,0.78)'])
-  .arcAltitude(() => 0.28)
-  .arcStroke(() => 0.65)
-  .arcDashLength(() => 0.32)
-  .arcDashGap(() => 1.4)
-  .arcDashAnimateTime(() => 4200)
-  .ringsData([])
-  .ringLat(d => d.lat)
-  .ringLng(d => d.lng)
-  .ringColor(d => d.type === 'airport' ? 'rgba(51,136,255,0.24)' : 'rgba(80,200,140,0.32)')
-  .ringMaxRadius(() => 2.2)
-  .ringPropagationSpeed(() => 0.55)
-  .ringRepeatPeriod(() => 2400)
-  .onPointClick(d => {
-    if (currentTrip) {
-      const idx = currentTrip.points.findIndex(p => p.name === d.name);
-      if (idx !== -1) { currentStopIndex = idx; showBillboard(); }
-    }
-  });
- 
-// ── HEX POLYGONS ──────────────────────────────────────────────────────────────
-function generateCountryPolygons() {
-  globe.polygonsData(buildCountryFeatures());
-}
- 
-// ── POINTS ────────────────────────────────────────────────────────────────────
-function refreshAllPoints(activeTrip = null) {
-  const points = [];
- 
-  if (activeTrip) {
-    // Only show this trip's stops, all in red
-    activeTrip.points.forEach(city => {
-      points.push({ lat:city.lat, lng:city.lng, name:city.name, color:'#ff3366', type:'trip' });
-    });
-  } else {
-    // Idle: show every trip city in green
-    const cityMap = new Map();
-    TRIPS.forEach(t => t.points.forEach(c => cityMap.set(c.name, c)));
-    cityMap.forEach(city => {
-      points.push({ lat:city.lat, lng:city.lng, name:city.name, color:'#50c88c', type:'trip' });
-    });
-    // Extra cities and airports
-    EXTRA_VISITED_CITIES.forEach(c => points.push({ lat:c.lat, lng:c.lng, name:c.name, color:'#50c88c', type:'extra' }));
-    VISITED_AIRPORTS.forEach(a => points.push({ lat:a.lat, lng:a.lng, name:a.name, color:'#3388ff', type:'airport' }));
-  }
- 
-  globe.pointsData(points);
-  globe.labelsData(activeTrip ? [] : getAirportLabels());
-  globe.arcsData(activeTrip ? [] : getRouteData());
-  globe.ringsData(points.filter(point => point.type === 'airport'));
-}
- 
-// ── FREE SPIN ─────────────────────────────────────────────────────────────────
-function enableFreeSpin() {
-  currentTrip = null;
-  currentStopIndex = 0;
-  document.querySelectorAll('.trip-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('billboard').style.display = 'none';
-  refreshAllPoints(null);
-  globe.controls().autoRotate = true;
-  globe.controls().autoRotateSpeed = 0.32;
-}
- 
-// ── BILLBOARD ─────────────────────────────────────────────────────────────────
-function showBillboard() {
-  if (!currentTrip) return;
-  const p = currentTrip.points[currentStopIndex];
-  document.getElementById('bb-city').textContent = p.name;
-  document.getElementById('bb-count').textContent = `${currentStopIndex+1}/${currentTrip.points.length} · ${p.images.length} photos`;
- 
-  const stack = document.getElementById('bb-stack');
-  stack.innerHTML = '';
-  const n = Math.min(5, p.images.length);
-  const metrics = getBillboardMetrics();
-  stack.style.width = n ? (metrics.size + (n-1)*metrics.offset) + 'px' : '0px';
-  preloadPreviews(p);
-  for (let i = 0; i < n; i++) {
-    const img = document.createElement('img');
-    img.className = 'bb-img';
-    img.src = previewSrc(p.images[i]);
-    img.alt = `${p.name} preview ${i + 1}`;
-    img.decoding = 'async';
-    img.loading = i === 0 ? 'eager' : 'lazy';
-    img.style.left  = (i * metrics.offset) + 'px';
-    img.style.zIndex = n - i;
-    img.style.transform = `rotate(${(i-(n-1)/2)*3.5}deg)`;
-    stack.appendChild(img);
-  }
-  document.getElementById('billboard').style.display = 'block';
-}
- 
-// ── GALLERY ───────────────────────────────────────────────────────────────────
-function openGallery(point) {
-  // header
-  document.getElementById('gallery-location').textContent = currentTrip ? currentTrip.name : 'Photo Gallery';
-  document.getElementById('gallery-name').textContent = point.name;
- 
-  // build grid
-  const grid = document.getElementById('gallery-grid');
-  grid.innerHTML = '';
-  point.images.forEach(src => {
-    const img = document.createElement('img');
-    img.className = 'gal-img';
-    img.src = previewSrc(src);
-    img.alt = `${point.name} photo`;
-    img.decoding = 'async';
-    img.loading = 'lazy';
-    img.onclick = e => { e.stopPropagation(); openLightbox(src); };
-    grid.appendChild(img);
-  });
- 
-  document.getElementById('gallery').style.display = 'flex';
-}
- 
-function closeGallery() {
-  document.getElementById('gallery').style.display = 'none';
-}
- 
-// ── LIGHTBOX ──────────────────────────────────────────────────────────────────
-function openLightbox(src) {
-  document.getElementById('lb-img').src = src;
-  document.getElementById('lightbox').style.display = 'flex';
-}
- 
-function closeLightbox() {
-  document.getElementById('lightbox').style.display = 'none';
-}
- 
-// ── EVENT LISTENERS ───────────────────────────────────────────────────────────
-document.getElementById('panel-title').onclick = enableFreeSpin;
- 
-document.getElementById('bb-close').onclick = e => {
-  e.stopPropagation();
-  enableFreeSpin();
-};
- 
-document.getElementById('billboard').onclick = () => {
-  if (currentTrip) openGallery(currentTrip.points[currentStopIndex]);
-};
- 
-document.getElementById('bb-prev').onclick = e => {
-  e.stopPropagation();
-  if (!currentTrip) return;
-  currentStopIndex = (currentStopIndex - 1 + currentTrip.points.length) % currentTrip.points.length;
-  showBillboard();
-};
-document.getElementById('bb-next').onclick = e => {
-  e.stopPropagation();
-  if (!currentTrip) return;
-  currentStopIndex = (currentStopIndex + 1) % currentTrip.points.length;
-  showBillboard();
-};
- 
-document.getElementById('gallery-close').onclick = e => {
-  e.stopPropagation();
-  closeGallery();
-};
- 
-document.getElementById('lb-close').onclick = e => {
-  e.stopPropagation();
-  closeLightbox();
-};
- 
-document.getElementById('lightbox').onclick = e => {
-  if (e.target === document.getElementById('lightbox')) closeLightbox();
-};
- 
-document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
-  if (document.getElementById('lightbox').style.display === 'flex') { closeLightbox(); return; }
-  if (document.getElementById('gallery').style.display  === 'flex') { closeGallery();  return; }
-  if (document.getElementById('billboard').style.display === 'block') { enableFreeSpin(); }
-});
- 
-// ── TRIP BUTTONS ──────────────────────────────────────────────────────────────
-const panel = document.getElementById('panel');
-TRIPS.forEach(trip => {
-  const btn = document.createElement('button');
-  btn.className = 'trip-btn';
-  btn.textContent = trip.name;
-  btn.onclick = () => {
-    document.querySelectorAll('.trip-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    currentTrip = trip;
-    currentStopIndex = 0;
-    refreshAllPoints(trip);
-    globe.controls().autoRotate = false;
-    globe.pointOfView({ lat:trip.points[0].lat, lng:trip.points[0].lng, altitude:1.75 }, 1400);
-    preloadPreviews(trip.points[0], 5);
-    showBillboard();
-  };
-  panel.appendChild(btn);
-});
- 
-// ── INIT ──────────────────────────────────────────────────────────────────────
-generateCountryPolygons();
-refreshAllPoints(null);
-globe.pointOfView({ lat:37, lng:-60, altitude:1.25 }, 0);
-globe.onGlobeReady(() => {
-  globe.controls().autoRotate = true;
-  globe.controls().autoRotateSpeed = 0.32;
-});
- 
-// Resize globe canvas when window or orientation changes
-function resizeGlobe() {
-  const el = document.getElementById('globeViz');
-  globe.width(el.clientWidth);
-  globe.height(el.clientHeight);
-}
-window.addEventListener('resize', resizeGlobe);
-// Also fire after a short delay to catch mobile browser chrome collapsing
-window.addEventListener('resize', () => setTimeout(resizeGlobe, 300));
-</script>
+  <noscript>
+    <div class="noscript-message">This interactive travel map needs JavaScript to display its routes.</div>
+  </noscript>
 </body>
 </html>

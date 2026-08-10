@@ -1,7 +1,7 @@
 window.TRAVEL_LOG_DATA = (() => {
   const modes = {
-    plane: { label: "Plane", short: "✈", color: "#72d5ff" },
-    shinkansen: { label: "Shinkansen", short: "新", color: "#ff6689" },
+    plane: { label: "Plane", short: "✈", color: "#9ca6af" },
+    shinkansen: { label: "Shinkansen", short: "新", color: "#1f4e8c" },
     train: { label: "Train", short: "JR", color: "#ffc85b" },
     bus: { label: "Bus", short: "BUS", color: "#b794f6" },
   };
@@ -102,7 +102,7 @@ window.TRAVEL_LOG_DATA = (() => {
     name: "Japan 2026",
     shortName: "Japan 2026",
     eyebrow: "Seven areas · Japan",
-    status: "In progress",
+    status: "Latest trip",
     description:
       "Confirmed places across Tokyo, Sendai, Sapporo, Osaka, Kyoto, Nagoya, and the Kitakyushu group, connected by the trip’s ordered air, rail, and bus itinerary.",
     defaultLegId: "yyz-hnd-ac1",
@@ -960,6 +960,7 @@ window.TRAVEL_LOG_DATA = (() => {
         label: "Keikyu Airport Line · JR Tokaido Line",
         detail: "Haneda Airport to Tokyo Station by Keikyu via Shinagawa, then JR to Tokyo.",
         via: railShapes.hanedaTokyo,
+        playback: { followZoom: 14 },
       },
       {
         id: "tokyo-nagoya-shinkansen",
@@ -980,6 +981,7 @@ window.TRAVEL_LOG_DATA = (() => {
         label: "Nagoya Subway Higashiyama Line",
         detail: "Nagoya Station to Sakae Station along the Higashiyama Line.",
         via: railShapes.nagoyaSakae,
+        playback: { followZoom: 12 },
       },
       {
         id: "nagoya-kyoto-shinkansen",
@@ -990,6 +992,7 @@ window.TRAVEL_LOG_DATA = (() => {
         label: "Tokaido Shinkansen",
         detail: "Nagoya Station to Kyoto Station following the Shinkansen alignment.",
         via: railShapes.nagoyaKyoto,
+        playback: { minimumDurationMs: 10000, followZoom: 9 },
       },
       {
         id: "kyoto-osaka-local",
@@ -1000,6 +1003,7 @@ window.TRAVEL_LOG_DATA = (() => {
         label: "JR Kyoto Line",
         detail: "Local train from Kyoto Station to Osaka Station along the JR alignment.",
         via: railShapes.kyotoOsakaLocal,
+        playback: { minimumDurationMs: 12000, followZoom: 11 },
       },
       {
         id: "shin-osaka-nagoya-shinkansen",
@@ -1010,6 +1014,7 @@ window.TRAVEL_LOG_DATA = (() => {
         label: "Tokaido Shinkansen",
         detail: "The Osaka-to-Nagoya leg from Shin-Osaka, Osaka’s Shinkansen station.",
         via: railShapes.shinOsakaNagoya,
+        playback: { minimumDurationMs: 10500, followZoom: 9 },
       },
       {
         id: "nagoya-hakata-shinkansen",
@@ -1020,6 +1025,7 @@ window.TRAVEL_LOG_DATA = (() => {
         label: "Tokaido · Sanyo Shinkansen",
         detail: "Nagoya Station to Hakata Station following the through Shinkansen corridor.",
         via: railShapes.nagoyaHakata,
+        playback: { minimumDurationMs: 13000, followZoom: 7 },
       },
       {
         id: "hakata-yufuin-yufuin-no-mori",

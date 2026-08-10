@@ -5,7 +5,26 @@
   if (!data?.overview || !Array.isArray(data.trips)) return;
 
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const motionDurations = { plane: 6200, shinkansen: 5200, train: 4600, bus: 5000 };
+  const motionTiming = {
+    plane: { minimum: 8000, maximum: 12000, metersPerMillisecond: 100 },
+    shinkansen: { minimum: 8000, maximum: 15000, metersPerMillisecond: 70 },
+    train: { minimum: 9000, maximum: 16000, metersPerMillisecond: 18 },
+    bus: { minimum: 9000, maximum: 16000, metersPerMillisecond: 10 },
+  };
+  const adaptiveMotionPacing = {
+    plane: {
+      nearDistance: 50000,
+      farDistance: 260000,
+      cruiseMultiplier: 2.1,
+      minimumDuration: 6000,
+    },
+    shinkansen: {
+      nearDistance: 2500,
+      farDistance: 28000,
+      cruiseMultiplier: 1.65,
+      minimumDuration: 7000,
+    },
+  };
   const tripsById = new Map(data.trips.map((trip) => [trip.id, trip]));
   const airportsById = new Map(data.overview.airports.map((airport) => [airport.id, airport]));
   const overviewFlights = data.overview.flights
@@ -71,9 +90,27 @@
     motionProgress: 0,
     motionBearing: null,
     motionLastPaintAt: 0,
+    motionResumeTimer: null,
+    motionResumeHandler: null,
+    motionResumeToken: 0,
+    followCamera: false,
+    followLastPaintAt: 0,
+    followCameraMoving: false,
+    cameraPreparing: false,
+    followReleaseTimer: null,
+    followReleaseHandler: null,
     streetTripId: null,
     markerLayers: new Map(),
     routeLayers: new Map(),
+    galleryPhotos: [],
+    galleryStopName: "",
+    galleryReturnFocus: null,
+    lightboxIndex: -1,
+    lightboxReturnFocus: null,
+    lightboxLoadToken: 0,
+    lightboxLoader: null,
+    lightboxSwipe: null,
+    lightboxSuppressClickUntil: 0,
   };
 
   const elements = {
@@ -114,8 +151,13 @@
     galleryGrid: document.getElementById("gallery-grid"),
     galleryClose: document.getElementById("gallery-close"),
     lightbox: document.getElementById("lightbox"),
+    lightboxTitle: document.getElementById("lightbox-title"),
+    lightboxStage: document.getElementById("lightbox-stage"),
     lightboxImage: document.getElementById("lightbox-image"),
     lightboxClose: document.getElementById("lightbox-close"),
+    lightboxPrevious: document.getElementById("lightbox-previous"),
+    lightboxNext: document.getElementById("lightbox-next"),
+    lightboxCount: document.getElementById("lightbox-count"),
   };
 
   function isOverview() {
@@ -237,7 +279,7 @@
       elements.tripStatus.textContent = data.overview.status;
       elements.tripDescription.textContent = data.overview.description;
       elements.mapEyebrow.textContent = "Personal travel atlas";
-      elements.mapTitle.textContent = "Your journeys, in motion";
+      elements.mapTitle.textContent = "Journey, in motion";
       document.title = "Travel Log · Personal Atlas";
       return;
     }
@@ -332,6 +374,11 @@
       return;
     }
 
+    if (state.mapFocus && state.mapFocus !== "all" && !state.selectedStopId) {
+      elements.routeCard.hidden = true;
+      return;
+    }
+
     elements.routeCard.hidden = false;
     const trip = currentTrip();
     const stops = stopMap(trip);
@@ -341,6 +388,7 @@
       const color = markerColor(selectedStop);
       elements.routeCard.style.setProperty("--mode-color", color);
       elements.routeMode.style.setProperty("--mode-color", color);
+      elements.routeMode.style.removeProperty("--mode-text-color");
       elements.routeMode.textContent = markerKindLabel(selectedStop);
       elements.routeStep.textContent = selectedStop.photos.length
         ? selectedStop.photos.length +
@@ -369,6 +417,7 @@
       const color = markerColor(stop);
       elements.routeCard.style.setProperty("--mode-color", color);
       elements.routeMode.style.setProperty("--mode-color", color);
+      elements.routeMode.style.removeProperty("--mode-text-color");
       elements.routeMode.textContent = stop.city;
       elements.routeStep.textContent =
         trip.stops.length + " saved place" + (trip.stops.length === 1 ? "" : "s");
@@ -386,6 +435,10 @@
     const orderedTransitCount = trip.legs.filter((item) => Number.isInteger(item.order)).length;
     elements.routeCard.style.setProperty("--mode-color", color);
     elements.routeMode.style.setProperty("--mode-color", color);
+    elements.routeMode.style.setProperty(
+      "--mode-text-color",
+      leg.mode === "shinkansen" ? "#8eb9f5" : color,
+    );
     elements.routeMode.textContent = modeLabel(leg.mode);
     elements.routeStep.textContent = Number.isInteger(leg.order)
       ? "Transit " + leg.order + " of " + orderedTransitCount
@@ -408,15 +461,29 @@
   function renderPlaybackState() {
     if (isOverview()) {
       elements.routeCard.classList.remove("is-playing");
+      elements.mapStage.classList.remove("is-following-route");
       return;
     }
 
+    const canResume = state.motionProgress > 0 && state.motionProgress < 1;
     elements.routeCard.classList.toggle("is-playing", state.playing);
+    elements.mapStage.classList.toggle(
+      "is-following-route",
+      state.playing && state.followCamera,
+    );
     elements.routePlayIcon.textContent = state.playing ? "Ⅱ" : "▶";
-    elements.routePlayLabel.textContent = state.playing ? "Pause" : "Play route";
+    elements.routePlayLabel.textContent = state.playing
+      ? "Pause"
+      : canResume
+        ? "Resume"
+        : "Play route";
     elements.routePlay.setAttribute(
       "aria-label",
-      state.playing ? "Pause route animation" : "Play route animation",
+      state.playing
+        ? "Pause route animation"
+        : canResume
+          ? "Resume route animation"
+          : "Play route animation",
     );
     elements.routeProgress.style.setProperty(
       "--motion-progress",
@@ -1004,7 +1071,7 @@
       ...flight,
       altitude: flightAltitude(flight),
       stroke: 0.36,
-      color: ["rgba(104,219,176,0.18)", "rgba(104,219,176,0.66)"],
+      color: ["rgba(166,176,186,0.08)", "rgba(166,176,186,0.38)"],
     }));
 
     state.globe.pointsData(points);
@@ -1213,6 +1280,18 @@
       state.motionGroup = motionGroup;
 
       map.on("zoomend moveend", () => updateMotionVehicle(state.motionProgress));
+      map.on("dragstart boxzoomstart dblclick", pausePlaybackForMapInteraction);
+      const mapContainer = map.getContainer();
+      mapContainer.addEventListener("wheel", pausePlaybackForMapInteraction, {
+        passive: true,
+      });
+      mapContainer.addEventListener(
+        "touchstart",
+        (event) => {
+          if (event.touches.length > 1) pausePlaybackForMapInteraction();
+        },
+        { passive: true },
+      );
 
       const resizeObserver = new ResizeObserver(() => {
         if (elements.streetMap.hidden) return;
@@ -1303,10 +1382,21 @@
   }
 
   function routeStyle(leg, active, dimmed) {
+    const opacity = leg.mode === "plane"
+      ? dimmed
+        ? 0.1
+        : active
+          ? 0.58
+          : 0.28
+      : dimmed
+        ? 0.2
+        : active
+          ? 0.96
+          : 0.52;
     return {
       color: modeColor(leg.mode),
       weight: active ? 5 : 2.7,
-      opacity: dimmed ? 0.2 : active ? 0.96 : 0.52,
+      opacity,
       dashArray: routeDashArray(leg.mode),
       dashOffset: "0",
       lineCap: "round",
@@ -1350,7 +1440,7 @@
           direction: "top",
           opacity: 1,
         });
-        marker.on("click", () => selectStop(stop.id));
+        marker.on("click", () => selectStop(stop.id, marker.getElement()));
         marker.options.travelVisualState = "default";
         state.markerLayers.set(stop.id, marker);
         return marker;
@@ -1387,8 +1477,31 @@
     updateStreetStyles();
   }
 
-  function motionDuration(leg = activeLeg()) {
-    return motionDurations[leg?.mode] || 4800;
+  function motionDuration(leg = activeLeg(), route = state.motionRoute) {
+    const timing = motionTiming[leg?.mode] || {
+      minimum: 9000,
+      maximum: 16000,
+      metersPerMillisecond: 16,
+    };
+    if (!route?.total) return timing.minimum;
+    const baseDuration = Math.min(
+      timing.maximum,
+      Math.max(
+        timing.minimum,
+        timing.minimum + route.total / timing.metersPerMillisecond,
+      ),
+    );
+    const pacing = adaptiveMotionPacing[leg?.mode];
+    const pacedDuration = pacing && route.paceRatio
+      ? Math.max(
+          pacing.minimumDuration,
+          baseDuration * route.paceRatio,
+        )
+      : baseDuration;
+    return Math.max(
+      pacedDuration,
+      Number(leg?.playback?.minimumDurationMs) || 0,
+    );
   }
 
   function clearMotionLayers(forgetRoute = true) {
@@ -1408,7 +1521,72 @@
     state.motionProgress = 0;
     state.motionBearing = null;
     state.motionLastPaintAt = 0;
+    state.followLastPaintAt = 0;
     elements.routeProgress.style.setProperty("--motion-progress", "0");
+  }
+
+  function smoothStep(value) {
+    const clamped = Math.max(0, Math.min(1, value));
+    return clamped * clamped * (3 - 2 * clamped);
+  }
+
+  function buildAdaptivePace(leg, points, cumulative, stops) {
+    const pacing = adaptiveMotionPacing[leg.mode];
+    if (!pacing || points.length < 2) return null;
+
+    const attentionStops = new Map();
+    [...stops.values()].forEach((stop) => {
+      if (markerPhotoSource(stop) || stop.photos?.length) {
+        attentionStops.set(stop.id, stop);
+      }
+    });
+    [stops.get(leg.from), stops.get(leg.to)].forEach((stop) => {
+      if (stop) attentionStops.set(stop.id, stop);
+    });
+    const attentionPoints = [...attentionStops.values()];
+    const cruiseWeight = 1 / pacing.cruiseMultiplier;
+    let segmentWeights = points.slice(1).map((point, index) => {
+      const previous = points[index];
+      const midpoint = window.L.latLng(
+        (previous[0] + point[0]) / 2,
+        (previous[1] + point[1]) / 2,
+      );
+      let nearestDistance = Infinity;
+      attentionPoints.forEach((stop) => {
+        nearestDistance = Math.min(
+          nearestDistance,
+          midpoint.distanceTo(window.L.latLng(stop.lat, stop.lng)),
+        );
+      });
+      const blend = 1 - smoothStep(
+        (nearestDistance - pacing.nearDistance) /
+          (pacing.farDistance - pacing.nearDistance),
+      );
+      return cruiseWeight + (1 - cruiseWeight) * blend;
+    });
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      segmentWeights = segmentWeights.map((weight, index, weights) =>
+        (weights[index - 1] ?? weight) * 0.25 +
+        weight * 0.5 +
+        (weights[index + 1] ?? weight) * 0.25,
+      );
+    }
+
+    const paceCumulative = [0];
+    segmentWeights.forEach((weight, index) => {
+      const segmentLength = cumulative[index + 1] - cumulative[index];
+      paceCumulative.push(paceCumulative[index] + segmentLength * weight);
+    });
+    const paceTotal = paceCumulative.at(-1);
+    const total = cumulative.at(-1);
+    return paceTotal > 0 && total > 0
+      ? {
+          paceCumulative,
+          paceTotal,
+          paceRatio: paceTotal / total,
+        }
+      : null;
   }
 
   function buildMotionRoute(leg, stops) {
@@ -1436,26 +1614,33 @@
       );
     }
     const total = cumulative.at(-1);
-    return total > 0 ? { points, cumulative, total } : null;
+    if (total <= 0) return null;
+    return {
+      points,
+      cumulative,
+      total,
+      ...(buildAdaptivePace(leg, points, cumulative, stops) || {}),
+    };
   }
 
   function sampleMotionRoute(route, progress) {
     const clamped = Math.max(0, Math.min(1, progress));
-    const eased = clamped * clamped * (3 - 2 * clamped);
-    const target = route.total * eased;
+    const sampleCumulative = route.paceCumulative || route.cumulative;
+    const sampleTotal = route.paceTotal || route.total;
+    const target = sampleTotal * clamped;
     let low = 1;
-    let high = route.cumulative.length - 1;
+    let high = sampleCumulative.length - 1;
     while (low < high) {
       const middle = Math.floor((low + high) / 2);
-      if (route.cumulative[middle] < target) low = middle + 1;
+      if (sampleCumulative[middle] < target) low = middle + 1;
       else high = middle;
     }
     const endIndex = low;
     const startIndex = Math.max(0, endIndex - 1);
-    const segmentStartDistance = route.cumulative[startIndex];
+    const segmentStartDistance = sampleCumulative[startIndex];
     const segmentLength = Math.max(
       0.0001,
-      route.cumulative[endIndex] - segmentStartDistance,
+      sampleCumulative[endIndex] - segmentStartDistance,
     );
     const ratio = Math.max(0, Math.min(1, (target - segmentStartDistance) / segmentLength));
     const start = route.points[startIndex];
@@ -1527,10 +1712,11 @@
       "--motion-progress",
       String(Math.max(0, Math.min(1, progress))),
     );
+    followMotionVehicle(sample.latlng);
   }
 
   function syncMotionVehicle(leg) {
-    if (!state.motionGroup || state.selectedStopId || !leg) {
+    if (!state.motionGroup || !leg) {
       clearMotionLayers(false);
       return;
     }
@@ -1547,7 +1733,7 @@
       state.motionTrail = window.L.polyline([start, start], {
         color: modeColor(leg.mode),
         weight: 6.5,
-        opacity: 0.94,
+        opacity: leg.mode === "plane" ? 0.62 : 0.94,
         lineCap: "round",
         lineJoin: "round",
         interactive: false,
@@ -1607,7 +1793,7 @@
             permanent: true,
           },
         );
-        marker.on("click", () => selectStop(endpoint.stop.id));
+        marker.on("click", () => selectStop(endpoint.stop.id, marker.getElement()));
         marker.addTo(state.endpointGroup);
       });
     }
@@ -1622,7 +1808,7 @@
       path?.classList.toggle("is-playing", active && state.playing);
       if (active) layer.bringToFront();
     });
-    syncMotionVehicle(!state.selectedStopId ? leg : null);
+    syncMotionVehicle(leg);
   }
 
   function mapPadding() {
@@ -1678,11 +1864,199 @@
     });
   }
 
+  function followsGroundVehicle(leg = activeLeg()) {
+    return ["shinkansen", "train", "bus"].includes(leg?.mode);
+  }
+
+  function routeFollowZoom(leg, route = state.motionRoute) {
+    const configuredZoom = Number(leg?.playback?.followZoom);
+    if (Number.isFinite(configuredZoom)) return configuredZoom;
+    const distance = route?.total || 0;
+    if (leg?.mode === "train") {
+      if (distance <= 25000) return 14;
+      if (distance <= 80000) return 13;
+      return 11;
+    }
+    if (leg?.mode === "bus") return distance <= 40000 ? 13 : 11;
+    if (leg?.mode === "shinkansen") {
+      if (distance <= 200000) return 10;
+      if (distance <= 600000) return 9;
+      return 8;
+    }
+    return 8;
+  }
+
+  function focusCurrentMotionVehicle(animate = true) {
+    const leg = activeLeg();
+    if (!state.streetMap || !state.motionRoute || !leg) {
+      focusLeg(leg, animate);
+      return;
+    }
+    const current = sampleMotionRoute(
+      state.motionRoute,
+      state.motionProgress,
+    ).latlng;
+    state.streetMap.flyTo(current, routeFollowZoom(leg), {
+      animate: animate && !reducedMotion,
+      duration: 0.62,
+    });
+  }
+
+  function releaseFollowCameraMovement() {
+    if (state.followReleaseTimer !== null) {
+      window.clearTimeout(state.followReleaseTimer);
+      state.followReleaseTimer = null;
+    }
+    if (state.followReleaseHandler && state.streetMap) {
+      state.streetMap.off("moveend", state.followReleaseHandler);
+    }
+    state.followReleaseHandler = null;
+    state.followCameraMoving = false;
+  }
+
+  function followMotionVehicle(latlng) {
+    if (
+      !state.playing ||
+      !state.followCamera ||
+      state.cameraPreparing ||
+      !state.streetMap?._loaded
+    ) return;
+    const timestamp = performance.now();
+    const interval = window.innerWidth < 821 ? 450 : 350;
+    if (
+      state.followCameraMoving ||
+      timestamp - state.followLastPaintAt < interval
+    ) return;
+
+    const point = state.streetMap.latLngToContainerPoint(latlng);
+    const size = state.streetMap.getSize();
+    const center = size.divideBy(2);
+    const maximumDrift = window.innerWidth < 821 ? 55 : 78;
+    if (point.distanceTo(center) <= maximumDrift) return;
+
+    state.followLastPaintAt = timestamp;
+    state.followCameraMoving = true;
+    const release = () => releaseFollowCameraMovement();
+    state.followReleaseHandler = release;
+    state.streetMap.once("moveend", release);
+    state.followReleaseTimer = window.setTimeout(release, reducedMotion ? 80 : 520);
+    state.streetMap.panTo(latlng, {
+      animate: !reducedMotion,
+      duration: 0.32,
+      easeLinearity: 0.5,
+    });
+  }
+
+  function cancelMotionCameraPreparation() {
+    state.motionResumeToken += 1;
+    state.cameraPreparing = false;
+    if (state.motionResumeTimer !== null) {
+      window.clearTimeout(state.motionResumeTimer);
+      state.motionResumeTimer = null;
+    }
+    if (state.motionResumeHandler && state.streetMap) {
+      state.streetMap.off("moveend", state.motionResumeHandler);
+    }
+    state.motionResumeHandler = null;
+  }
+
+  function preparePlaybackCamera(options = {}) {
+    const leg = activeLeg();
+    if (!state.playing || !state.streetMap || !leg || !state.motionRoute) return;
+    cancelMotionCameraPreparation();
+    releaseFollowCameraMovement();
+    state.streetMap.stop();
+    const token = state.motionResumeToken;
+    const legId = leg.id;
+    const followsVehicle = followsGroundVehicle(leg);
+    const forceExact = Boolean(options.forceExact);
+    const current = followsVehicle
+      ? sampleMotionRoute(state.motionRoute, state.motionProgress).latlng
+      : null;
+    const zoom = followsVehicle ? routeFollowZoom(leg) : null;
+    const readyAt = performance.now() + (reducedMotion ? 0 : followsVehicle ? 600 : 900);
+    state.cameraPreparing = true;
+    state.followCamera = followsVehicle;
+    state.followLastPaintAt = 0;
+    renderPlaybackState();
+
+    const finish = () => {
+      if (token !== state.motionResumeToken) return;
+      const waitRemaining = readyAt - performance.now();
+      if (waitRemaining > 16) {
+        if (state.motionResumeTimer !== null) {
+          window.clearTimeout(state.motionResumeTimer);
+        }
+        state.motionResumeTimer = window.setTimeout(finish, waitRemaining);
+        return;
+      }
+      if (state.motionResumeTimer !== null) {
+        window.clearTimeout(state.motionResumeTimer);
+        state.motionResumeTimer = null;
+      }
+      if (state.motionResumeHandler && state.streetMap) {
+        state.streetMap.off("moveend", state.motionResumeHandler);
+      }
+      state.motionResumeHandler = null;
+      if (!state.playing || activeLeg()?.id !== legId) return;
+      if (
+        forceExact &&
+        followsVehicle &&
+        (state.streetMap.getCenter().distanceTo(current) >= 8 ||
+          Math.abs(state.streetMap.getZoom() - zoom) >= 0.01)
+      ) {
+        state.streetMap.setView(current, zoom, { animate: false });
+        window.requestAnimationFrame(finish);
+        return;
+      }
+      state.cameraPreparing = false;
+      requestMotionFrame();
+    };
+    state.motionResumeHandler = finish;
+    state.streetMap.once("moveend", finish);
+
+    if (followsVehicle) {
+      if (forceExact) {
+        state.motionResumeTimer = window.setTimeout(
+          finish,
+          reducedMotion ? 80 : 650,
+        );
+        state.streetMap.setView(current, zoom, { animate: false });
+        window.requestAnimationFrame(finish);
+        return;
+      }
+      const samePosition = state.streetMap.getCenter().distanceTo(current) < 8;
+      const sameZoom = Math.abs(state.streetMap.getZoom() - zoom) < 0.01;
+      state.motionResumeTimer = window.setTimeout(
+        finish,
+        reducedMotion ? 80 : 850,
+      );
+      if (reducedMotion || (samePosition && sameZoom)) {
+        state.streetMap.setView(current, zoom, { animate: false });
+        window.requestAnimationFrame(finish);
+      } else {
+        state.streetMap.flyTo(current, zoom, { animate: true, duration: 0.62 });
+      }
+      return;
+    }
+
+    focusLeg(leg, !reducedMotion);
+    state.motionResumeTimer = window.setTimeout(finish, reducedMotion ? 80 : 1200);
+  }
+
+  function pausePlaybackForMapInteraction() {
+    if (!state.playing) return;
+    stopPlayback();
+    state.streetMap?.stop();
+  }
+
   function focusStop(stop) {
     if (!state.streetMap) return;
+    const tripId = state.viewId;
     const marker = state.markerLayers.get(stop.id);
     const zoom = stop.kind === "airport" ? 14 : 16;
     const focus = () => {
+      if (state.viewId !== tripId || state.selectedStopId !== stop.id) return;
       state.streetMap.flyTo([stop.lat, stop.lng], Math.max(state.streetMap.getZoom(), zoom), {
         animate: !reducedMotion,
         duration: 0.8,
@@ -1703,6 +2077,7 @@
     state.mapFocus = focus;
     renderMapFocus();
     renderRouteCard();
+    renderPlaybackState();
     updateStreetStyles();
 
     if (focus === "all") {
@@ -1800,6 +2175,9 @@
     const trip = currentTrip();
     if (!trip?.legs.length) return;
     if (!options.keepPlaying) stopPlayback({ refresh: false });
+    cancelMotionCameraPreparation();
+    releaseFollowCameraMovement();
+    state.followCamera = false;
     state.activeLegIndex = (index + trip.legs.length) % trip.legs.length;
     resetMotionProgress();
     state.selectedStopId = null;
@@ -1808,17 +2186,20 @@
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
-    focusLeg();
-    if (state.playing) requestMotionFrame();
+    if (state.playing) {
+      preparePlaybackCamera({ forceExact: Boolean(options.keepPlaying) });
+    }
+    else focusLeg();
   }
 
-  function selectStop(stopId) {
+  function selectStop(stopId, opener) {
     const trip = currentTrip();
     const stop = stopMap(trip).get(stopId);
     if (!trip || !stop) return;
+    let galleryOpener = opener;
     stopPlayback();
     if (state.selectedStopId === stopId && stop.photos.length) {
-      openGallery(stop);
+      openGallery(stop, galleryOpener);
       return;
     }
     state.selectedStopId = stopId;
@@ -1827,8 +2208,9 @@
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
+    galleryOpener = state.markerLayers.get(stopId)?.getElement() || galleryOpener;
     focusStop(stop);
-    if (markerPhotoSource(stop) && stop.photos.length) openGallery(stop);
+    if (markerPhotoSource(stop) && stop.photos.length) openGallery(stop, galleryOpener);
   }
 
   function requestMotionFrame() {
@@ -1862,7 +2244,6 @@
 
     if (state.motionProgress >= 1) {
       setActiveLeg(state.activeLegIndex + 1, { keepPlaying: true });
-      requestMotionFrame();
       return;
     }
     requestMotionFrame();
@@ -1877,18 +2258,21 @@
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
-    focusLeg();
-    requestMotionFrame();
+    preparePlaybackCamera();
   }
 
   function stopPlayback(options = {}) {
-    if (state.playing && state.motionStartedAt !== null) {
-      const duration = motionDuration();
+    const wasPlaying = state.playing;
+    state.playing = false;
+    state.followCamera = false;
+    if (wasPlaying && state.motionStartedAt !== null) {
+      const duration = motionDuration(activeLeg(), state.motionRoute);
       state.motionElapsedMs = Math.min(duration, performance.now() - state.motionStartedAt);
       state.motionProgress = Math.min(1, state.motionElapsedMs / duration);
       updateMotionVehicle(state.motionProgress);
     }
-    state.playing = false;
+    cancelMotionCameraPreparation();
+    releaseFollowCameraMovement();
     if (state.motionFrame !== null) window.cancelAnimationFrame(state.motionFrame);
     state.motionFrame = null;
     state.motionStartedAt = null;
@@ -1902,9 +2286,21 @@
     else startPlayback();
   }
 
-  function openGallery(stop) {
+  function focusWithoutScroll(element) {
+    if (!element?.focus || !document.contains(element)) return;
+    try {
+      element.focus({ preventScroll: true });
+    } catch (_error) {
+      element.focus();
+    }
+  }
+
+  function openGallery(stop, opener = document.activeElement) {
     if (!stop.photos.length) return;
     stopPlayback();
+    state.galleryPhotos = stop.photos;
+    state.galleryStopName = stop.name;
+    state.galleryReturnFocus = opener?.focus ? opener : document.activeElement;
     elements.galleryKicker.textContent = currentTrip().name + " · " + stop.city;
     elements.galleryTitle.textContent = stop.name;
     elements.galleryGrid.replaceChildren(
@@ -1913,9 +2309,7 @@
         button.type = "button";
         button.className = "gallery__image-button is-loading";
         button.setAttribute("aria-label", "Open " + stop.name + " photo " + (index + 1));
-        button.addEventListener("click", () =>
-          openLightbox(photo.full, photo.preview, stop.name + " photo " + (index + 1)),
-        );
+        button.addEventListener("click", () => openLightbox(index, button));
         const image = document.createElement("img");
         image.alt = stop.name + " photo " + (index + 1);
         image.loading = index < 4 ? "eager" : "lazy";
@@ -1941,47 +2335,214 @@
         return button;
       }),
     );
+    elements.app.inert = true;
     elements.gallery.hidden = false;
     elements.galleryClose.focus();
   }
 
   function closeGallery() {
+    if (!elements.lightbox.hidden) closeLightbox({ restoreFocus: false });
+    const returnFocus = state.galleryReturnFocus;
+    const markerReturnFocus = state.markerLayers
+      .get(state.selectedStopId)
+      ?.getElement();
     elements.gallery.hidden = true;
     elements.galleryGrid.replaceChildren();
+    elements.app.inert = false;
+    state.galleryPhotos = [];
+    state.galleryStopName = "";
+    state.galleryReturnFocus = null;
+    focusWithoutScroll(
+      document.contains(returnFocus) ? returnFocus : markerReturnFocus,
+    );
   }
 
-  function openLightbox(src, preview, alt) {
+  function showLightboxPhoto(index) {
+    if (index < 0 || index >= state.galleryPhotos.length) return;
+    state.lightboxIndex = index;
+    state.lightboxLoadToken += 1;
+    const loadToken = state.lightboxLoadToken;
+    const photo = state.galleryPhotos[index];
+    const count = state.galleryPhotos.length;
+    const alt = state.galleryStopName + ", photo " + (index + 1) + " of " + count;
+
+    if (state.lightboxLoader) {
+      state.lightboxLoader.onload = null;
+      state.lightboxLoader.onerror = null;
+    }
     elements.lightbox.classList.add("is-loading");
     elements.lightbox.classList.remove("has-error");
     elements.lightbox.setAttribute("aria-busy", "true");
     elements.lightbox.style.setProperty(
       "--lightbox-preview",
-      "url(" + JSON.stringify(preview) + ")",
+      "url(" + JSON.stringify(photo.preview) + ")",
     );
+    elements.lightboxTitle.textContent = state.galleryStopName + " photo viewer";
+    elements.lightboxCount.textContent = index + 1 + " of " + count;
+    const focusBeforeNavigationUpdate = document.activeElement;
+    elements.lightboxPrevious.disabled = index === 0;
+    elements.lightboxNext.disabled = index === count - 1;
+    elements.lightboxPrevious.hidden = count < 2;
+    elements.lightboxNext.hidden = count < 2;
+    if (
+      focusBeforeNavigationUpdate === elements.lightboxPrevious &&
+      elements.lightboxPrevious.disabled
+    ) {
+      (elements.lightboxNext.disabled
+        ? elements.lightboxClose
+        : elements.lightboxNext).focus();
+    } else if (
+      focusBeforeNavigationUpdate === elements.lightboxNext &&
+      elements.lightboxNext.disabled
+    ) {
+      (elements.lightboxPrevious.disabled
+        ? elements.lightboxClose
+        : elements.lightboxPrevious).focus();
+    }
     elements.lightboxImage.alt = alt;
-    elements.lightboxImage.onload = () => {
+    elements.lightboxImage.removeAttribute("src");
+
+    const loader = new Image();
+    state.lightboxLoader = loader;
+    loader.decoding = "async";
+    loader.onload = () => {
+      if (loadToken !== state.lightboxLoadToken || index !== state.lightboxIndex) return;
+      elements.lightboxImage.src = photo.full;
       elements.lightbox.classList.remove("is-loading");
       elements.lightbox.setAttribute("aria-busy", "false");
     };
-    elements.lightboxImage.onerror = () => {
+    loader.onerror = () => {
+      if (loadToken !== state.lightboxLoadToken || index !== state.lightboxIndex) return;
       elements.lightbox.classList.remove("is-loading");
       elements.lightbox.classList.add("has-error");
       elements.lightbox.setAttribute("aria-busy", "false");
     };
+    loader.src = photo.full;
+  }
+
+  function navigateLightbox(direction) {
+    showLightboxPhoto(state.lightboxIndex + direction);
+  }
+
+  function openLightbox(index, opener) {
+    state.lightboxReturnFocus = opener?.focus ? opener : document.activeElement;
+    state.lightboxSuppressClickUntil = 0;
+    elements.gallery.inert = true;
+    elements.gallery.setAttribute("aria-hidden", "true");
     elements.lightbox.hidden = false;
-    elements.lightboxImage.src = src;
+    showLightboxPhoto(index);
     elements.lightboxClose.focus();
   }
 
-  function closeLightbox() {
+  function closeLightbox(options = {}) {
+    const returnFocus = state.lightboxReturnFocus;
+    state.lightboxLoadToken += 1;
+    if (state.lightboxLoader) {
+      state.lightboxLoader.onload = null;
+      state.lightboxLoader.onerror = null;
+    }
+    state.lightboxLoader = null;
+    state.lightboxIndex = -1;
+    state.lightboxReturnFocus = null;
+    state.lightboxSwipe = null;
+    state.lightboxSuppressClickUntil = 0;
     elements.lightbox.hidden = true;
     elements.lightbox.classList.remove("is-loading", "has-error");
     elements.lightbox.removeAttribute("aria-busy");
     elements.lightbox.style.removeProperty("--lightbox-preview");
-    elements.lightboxImage.onload = null;
-    elements.lightboxImage.onerror = null;
-    elements.lightboxImage.src = "";
+    elements.lightboxImage.removeAttribute("src");
     elements.lightboxImage.alt = "";
+    elements.lightboxCount.textContent = "";
+    elements.gallery.inert = false;
+    elements.gallery.removeAttribute("aria-hidden");
+    if (options.restoreFocus !== false) focusWithoutScroll(returnFocus);
+  }
+
+  function beginLightboxSwipe(event) {
+    if (event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) {
+      return;
+    }
+    if (event.clientX < 24 || event.clientX > window.innerWidth - 24) return;
+    state.lightboxSwipe = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    try {
+      elements.lightboxStage.setPointerCapture(event.pointerId);
+    } catch (_error) {
+      // Pointer capture is an enhancement; in-stage gestures still work without it.
+    }
+  }
+
+  function finishLightboxSwipe(event) {
+    const swipe = state.lightboxSwipe;
+    if (!swipe || swipe.pointerId !== event.pointerId) return;
+    state.lightboxSwipe = null;
+    const deltaX = event.clientX - swipe.startX;
+    const deltaY = event.clientY - swipe.startY;
+    const minimumDistance = Math.max(44, elements.lightboxStage.clientWidth * 0.12);
+    if (
+      Math.abs(deltaX) >= minimumDistance &&
+      Math.abs(deltaX) > Math.abs(deltaY) * 1.25
+    ) {
+      state.lightboxSuppressClickUntil = performance.now() + 450;
+      navigateLightbox(deltaX < 0 ? 1 : -1);
+    }
+  }
+
+  function cancelLightboxSwipe(event) {
+    if (state.lightboxSwipe?.pointerId === event.pointerId) state.lightboxSwipe = null;
+  }
+
+  function isLightboxBackdropClick(event) {
+    if (
+      event.target === elements.lightbox ||
+      event.target === elements.lightboxStage
+    ) return true;
+    if (event.target !== elements.lightboxImage) return false;
+
+    const naturalWidth = elements.lightboxImage.naturalWidth;
+    const naturalHeight = elements.lightboxImage.naturalHeight;
+    if (!naturalWidth || !naturalHeight) return false;
+    const bounds = elements.lightboxImage.getBoundingClientRect();
+    const scale = Math.min(
+      bounds.width / naturalWidth,
+      bounds.height / naturalHeight,
+    );
+    const renderedWidth = naturalWidth * scale;
+    const renderedHeight = naturalHeight * scale;
+    const renderedLeft = bounds.left + (bounds.width - renderedWidth) / 2;
+    const renderedTop = bounds.top + (bounds.height - renderedHeight) / 2;
+    return (
+      event.clientX < renderedLeft ||
+      event.clientX > renderedLeft + renderedWidth ||
+      event.clientY < renderedTop ||
+      event.clientY > renderedTop + renderedHeight
+    );
+  }
+
+  function trapModalFocus(event, modal) {
+    if (event.key !== "Tab") return;
+    const focusable = [...modal.querySelectorAll(
+      'button:not([disabled]):not([hidden]), [href], [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => !element.hidden && element.getClientRects().length);
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!focusable.includes(document.activeElement)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function renderAll(options = {}) {
@@ -2113,8 +2674,19 @@
   elements.routePlay.addEventListener("click", togglePrimaryAnimation);
   elements.galleryClose.addEventListener("click", closeGallery);
   elements.lightboxClose.addEventListener("click", closeLightbox);
+  elements.lightboxPrevious.addEventListener("click", () => navigateLightbox(-1));
+  elements.lightboxNext.addEventListener("click", () => navigateLightbox(1));
+  elements.lightboxStage.addEventListener("pointerdown", beginLightboxSwipe);
+  elements.lightboxStage.addEventListener("pointerup", finishLightboxSwipe);
+  elements.lightboxStage.addEventListener("pointercancel", cancelLightboxSwipe);
+  elements.lightboxStage.addEventListener("lostpointercapture", cancelLightboxSwipe);
+  elements.lightboxImage.addEventListener("dragstart", (event) => event.preventDefault());
   elements.lightbox.addEventListener("click", (event) => {
-    if (event.target === elements.lightbox) closeLightbox();
+    if (performance.now() < state.lightboxSuppressClickUntil) {
+      event.preventDefault();
+      return;
+    }
+    if (isLightboxBackdropClick(event)) closeLightbox();
   });
 
   elements.mapFocus.addEventListener("click", (event) => {
@@ -2134,11 +2706,38 @@
       else if (!isOverview() && state.selectedStopId) {
         state.selectedStopId = null;
         renderRouteCard();
+        renderPlaybackState();
         updateStreetStyles();
+        if (followsGroundVehicle()) {
+          focusCurrentMotionVehicle();
+        } else {
+          focusLeg();
+        }
       }
       return;
     }
-    if (!elements.gallery.hidden || !elements.lightbox.hidden) return;
+    if (!elements.lightbox.hidden) {
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        navigateLightbox(1);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        navigateLightbox(-1);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        showLightboxPhoto(0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        showLightboxPhoto(state.galleryPhotos.length - 1);
+      } else {
+        trapModalFocus(event, elements.lightbox);
+      }
+      return;
+    }
+    if (!elements.gallery.hidden) {
+      trapModalFocus(event, elements.gallery);
+      return;
+    }
     if (!isOverview() && event.key === "ArrowRight") setActiveLeg(state.activeLegIndex + 1);
     if (!isOverview() && event.key === "ArrowLeft") setActiveLeg(state.activeLegIndex - 1);
     if (!isOverview() && event.key === " ") {

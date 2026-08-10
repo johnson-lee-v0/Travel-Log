@@ -19,7 +19,7 @@
     crossorigin=""
   >
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-  <link rel="stylesheet" href="./styles.css?v=20260809-9">
+  <link rel="stylesheet" href="./styles.css?v=20260810-14">
   <script defer src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
   <script
     defer
@@ -28,9 +28,9 @@
     crossorigin=""
   ></script>
   <script defer src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-  <script defer src="./trip_routes/Japan_2026/rail-shapes.js?v=20260809-9"></script>
-  <script defer src="./data.js?v=20260809-9"></script>
-  <script defer src="./app.js?v=20260809-9"></script>
+  <script defer src="./trip_routes/Japan_2026/rail-shapes.js?v=20260810-14"></script>
+  <script defer src="./data.js?v=20260810-14"></script>
+  <script defer src="./app.js?v=20260810-14"></script>
 </head>
 <body>
   <a class="skip-link" href="#map-stage">Skip to map</a>
@@ -130,9 +130,15 @@
     <div class="gallery__grid" id="gallery-grid"></div>
   </section>
 
-  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" hidden>
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-labelledby="lightbox-title" hidden>
+    <h2 class="visually-hidden" id="lightbox-title">Photo viewer</h2>
     <button class="round-button lightbox__close" id="lightbox-close" type="button" aria-label="Close photo">×</button>
-    <img id="lightbox-image" src="" alt="">
+    <button class="round-button lightbox__nav lightbox__nav--previous" id="lightbox-previous" type="button" aria-label="Previous photo">‹</button>
+    <div class="lightbox__stage" id="lightbox-stage">
+      <img id="lightbox-image" alt="" draggable="false">
+    </div>
+    <button class="round-button lightbox__nav lightbox__nav--next" id="lightbox-next" type="button" aria-label="Next photo">›</button>
+    <p class="lightbox__count" id="lightbox-count" aria-live="polite" aria-atomic="true"></p>
   </div>
 
   <noscript>

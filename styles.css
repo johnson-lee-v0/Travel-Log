@@ -10,6 +10,7 @@
   --accent: #68dbb0;
   --airport: #3388ff;
   --transit: #ffc85b;
+  --restaurant: #f28c5c;
   --radius-lg: 22px;
   --radius-md: 14px;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
@@ -321,6 +322,7 @@ a:focus-visible {
 .street-map {
   background: #dce3e7;
   color: #16202a;
+  -webkit-touch-callout: none;
 }
 
 .globe-viz canvas {
@@ -459,6 +461,33 @@ a:focus-visible {
 .map-focus__button.is-active {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
+}
+
+.city-play {
+  position: absolute;
+  bottom: max(22px, env(safe-area-inset-bottom));
+  left: 50%;
+  z-index: 8;
+  min-height: 44px;
+  max-width: calc(100% - 44px);
+  padding: 10px 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(9, 20, 30, 0.92);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  backdrop-filter: blur(16px) saturate(125%);
+}
+
+.city-play:hover {
+  background: rgba(18, 35, 47, 0.96);
 }
 
 .route-card {
@@ -630,6 +659,13 @@ a:focus-visible {
   overflow: visible;
 }
 
+.trip-marker-wrap {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 34px;
+}
+
 .trip-photo-marker {
   position: relative;
   display: block;
@@ -748,6 +784,37 @@ a:focus-visible {
   background: var(--transit);
   color: #182028;
   font-size: 15px;
+}
+
+.trip-marker--restaurant {
+  background: var(--restaurant);
+  color: #2d160c;
+  font-size: 15px;
+}
+
+.trip-marker__tag {
+  position: absolute;
+  top: -13px;
+  left: 17px;
+  z-index: 4;
+  padding: 3px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 999px;
+  background: rgba(45, 22, 12, 0.94);
+  color: #fff4ed;
+  box-shadow: 0 3px 8px rgba(6, 18, 27, 0.3);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  transform: translateX(-50%);
+  transition: opacity 150ms ease, transform 150ms ease;
+  white-space: nowrap;
+}
+
+.map-stage.is-following-route .trip-marker__tag {
+  opacity: 0;
+  transform: translateX(-50%) translateY(4px) scale(0.85);
 }
 
 .trip-marker--place {
@@ -1367,6 +1434,11 @@ a:focus-visible {
     min-height: 32px;
     padding: 6px 9px;
     font-size: 9.5px;
+  }
+
+  .city-play {
+    bottom: max(12px, env(safe-area-inset-bottom));
+    max-width: calc(100% - 30px);
   }
 
   .leaflet-top.leaflet-left {

@@ -680,7 +680,7 @@ a:focus-visible {
   transition: box-shadow 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
 
-.map-stage.is-following-route .trip-photo-marker {
+.map-stage.is-playing-route .trip-photo-marker {
   opacity: 0.68;
   transform: scale(0.82);
 }
@@ -812,7 +812,7 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-.map-stage.is-following-route .trip-marker__tag {
+.map-stage.is-playing-route .trip-marker__tag {
   opacity: 0;
   transform: translateX(-50%) translateY(4px) scale(0.85);
 }
@@ -1428,6 +1428,14 @@ a:focus-visible {
     left: max(15px, env(safe-area-inset-left));
     width: auto;
     max-width: none;
+    background: rgba(7, 16, 25, 0.94);
+    backdrop-filter: none;
+  }
+
+  .city-play,
+  .route-card {
+    background: rgba(9, 20, 30, 0.96);
+    backdrop-filter: none;
   }
 
   .map-focus__button {

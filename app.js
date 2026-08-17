@@ -26,9 +26,9 @@
     },
   };
   const endpointDwellDurationMs = reducedMotion ? 900 : 1800;
-  const mapHoldPauseDurationMs = 550;
-  const mapHoldMoveTolerance = 12;
-  const mapHoldClickTolerance = 24;
+  const routeCameraIntroHoldMs = reducedMotion ? 80 : 280;
+  const routeCameraArrivalMinimumMs = reducedMotion ? 0 : 900;
+  const routeCameraArrivalMaximumMs = reducedMotion ? 0 : 1400;
   const tripsById = new Map(data.trips.map((trip) => [trip.id, trip]));
   const airportsById = new Map(data.overview.airports.map((airport) => [airport.id, airport]));
   const overviewFlights = data.overview.flights
@@ -77,9 +77,13 @@
     overviewPlaneLastPaintAt: 0,
     overviewPlaneStartedAt: null,
     overviewPlaneRuntime: null,
+    overviewGlobeFailed: false,
+    overviewGlobeReady: false,
+    overviewLayoutKey: "",
     mapFocus: "all",
     globe: null,
     streetMap: null,
+    streetTiles: null,
     markerCluster: null,
     routeGroup: null,
     endpointGroup: null,
@@ -95,19 +99,15 @@
     motionBearing: null,
     motionLastPaintAt: 0,
     motionResumeTimer: null,
-    motionResumeHandler: null,
+    motionCameraWaitCleanup: null,
     motionResumeToken: 0,
+    motionCameraPhase: "idle",
     endpointDwelling: false,
     endpointDwellTimer: null,
     endpointDwellToken: 0,
     endpointDwellDeadlineAt: 0,
     endpointDwellRemainingMs: 0,
-    followCamera: false,
-    followLastPaintAt: 0,
-    followCameraMoving: false,
     cameraPreparing: false,
-    followReleaseTimer: null,
-    followReleaseHandler: null,
     streetTripId: null,
     markerLayers: new Map(),
     routeLayers: new Map(),
@@ -500,7 +500,7 @@
     if (isOverview()) {
       elements.routeCard.classList.remove("is-playing");
       elements.routeCard.classList.remove("is-at-endpoint");
-      elements.mapStage.classList.remove("is-following-route");
+      elements.mapStage.classList.remove("is-playing-route");
       return;
     }
 
@@ -510,10 +510,7 @@
       (state.motionProgress > 0 && state.motionProgress < 1) || atEndpoint;
     elements.routeCard.classList.toggle("is-playing", state.playing);
     elements.routeCard.classList.toggle("is-at-endpoint", atEndpoint);
-    elements.mapStage.classList.toggle(
-      "is-following-route",
-      state.playing && state.followCamera,
-    );
+    elements.mapStage.classList.toggle("is-playing-route", state.playing);
     elements.routePlayIcon.textContent = state.playing ? "Ⅱ" : "▶";
     let playLabel = "Play route";
     let playAriaLabel = "Play route animation";
@@ -531,10 +528,20 @@
     }
     elements.routePlayLabel.textContent = playLabel;
     elements.routePlay.setAttribute("aria-label", playAriaLabel);
-    if (atEndpoint && !state.selectedStopId) {
-      elements.routeNote.textContent = state.playing
-        ? "Arrived — move the map to pause here."
-        : "Arrived — continue when ready.";
+    if (!state.selectedStopId) {
+      if (atEndpoint) {
+        elements.routeNote.textContent = state.playing
+          ? "Arrived — tap the map to pause here."
+          : "Arrived — continue when ready.";
+      } else if (state.playing) {
+        elements.routeNote.textContent = "Tap the map to pause.";
+      } else if (canResume) {
+        elements.routeNote.textContent = "Paused — resume when ready.";
+      } else {
+        elements.routeNote.textContent = currentTrip()?.routeDraft
+          ? "Draft route — exact direction, timing, and visit order are not asserted."
+          : "Travel route";
+      }
     }
     elements.routeProgress.style.setProperty(
       "--motion-progress",
@@ -840,18 +847,25 @@
 
   function overviewThreeConstructors(globe) {
     // Reuse Globe.gl's bundled Three.js runtime instead of shipping a second renderer copy.
+    let scene = null;
+    try {
+      scene = globe.scene();
+    } catch {
+      return null;
+    }
+    if (!scene) return null;
     let sampleMesh = null;
-    globe.scene().traverse((object) => {
+    scene.traverse((object) => {
       if (!sampleMesh && object.isMesh && object.geometry?.constructor) {
         sampleMesh = object;
       }
     });
     if (!sampleMesh?.constructor) return null;
     return {
-      Matrix4: globe.scene().matrixWorld.constructor,
+      Matrix4: scene.matrixWorld.constructor,
       Mesh: sampleMesh.constructor,
       sourceGeometry: sampleMesh.geometry,
-      Vector3: globe.scene().position.constructor,
+      Vector3: scene.position.constructor,
     };
   }
 
@@ -965,7 +979,11 @@
 
   function initOverviewFlightPlanes() {
     if (!state.globe || state.overviewPlaneRuntime) return;
-    if (!isOverview() || document.hidden || elements.globe.hidden) return;
+    if (
+      !isOverview() ||
+      document.hidden ||
+      elements.globe.hidden
+    ) return;
     const constructors = overviewThreeConstructors(state.globe);
     if (!constructors) {
       if (state.overviewPlaneInitAttempts < 180 && state.overviewPlaneInitFrame === null) {
@@ -1080,6 +1098,7 @@
 
   function startOverviewFlightPlanes() {
     if (
+      !state.overviewGlobeReady ||
       !state.overviewPlaneRuntime ||
       state.overviewPlaneFrame !== null ||
       !isOverview() ||
@@ -1133,6 +1152,17 @@
     state.globe.htmlElementsData([]);
     state.globe.ringsData([]);
     scheduleOverviewCityLabels(true);
+  }
+
+  function overviewInitialView() {
+    const initial = data.overview.initialView;
+    const { width, height } = elements.globe.getBoundingClientRect();
+    if (!(width > 0 && height > 0) || width >= height) return { ...initial };
+    const aspect = Math.max(0.45, Math.min(1, width / height));
+    return {
+      ...initial,
+      altitude: Math.min(4.2, ((1 + initial.altitude) * 1.04) / aspect - 1),
+    };
   }
 
   function focusGlobe(view, duration = 1050) {
@@ -1307,20 +1337,21 @@
     }
 
     try {
+      const compactMap = window.matchMedia("(max-width: 820px)").matches;
       const map = window.L.map(elements.streetMap, {
         zoomControl: true,
         attributionControl: false,
         zoomAnimation: !reducedMotion,
-        fadeAnimation: !reducedMotion,
-        markerZoomAnimation: !reducedMotion,
+        fadeAnimation: !reducedMotion && !compactMap,
+        markerZoomAnimation: !reducedMotion && !compactMap,
       });
       window.L.control.attribution({ position: "bottomleft", prefix: false }).addTo(map);
-      window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      const streetTiles = window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
         updateWhenIdle: true,
         updateWhenZooming: false,
-        keepBuffer: window.innerWidth < 821 ? 1 : 2,
-        detectRetina: window.devicePixelRatio > 1,
+        keepBuffer: compactMap ? 2 : 3,
+        detectRetina: !compactMap && window.devicePixelRatio > 1,
         attribution:
           '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
       }).addTo(map);
@@ -1338,10 +1369,12 @@
         zoomToBoundsOnClick: true,
         removeOutsideVisibleBounds: true,
         chunkedLoading: true,
+        animate: !compactMap,
         animateAddingMarkers: false,
         iconCreateFunction: clusterIcon,
       });
       markerCluster.on("clusterclick", (event) => {
+        pausePlaybackForMapInteraction();
         if (map.getZoom() < markerRevealZoom - 1) return;
         const revealZoom = Math.min(markerRevealZoom, map.getMaxZoom());
         if (revealZoom <= map.getZoom()) return;
@@ -1355,181 +1388,57 @@
       const motionGroup = window.L.layerGroup().addTo(map);
 
       state.streetMap = map;
+      state.streetTiles = streetTiles;
       state.routeGroup = routeGroup;
       state.markerCluster = markerCluster;
       state.endpointGroup = endpointGroup;
       state.motionGroup = motionGroup;
 
       const mapContainer = map.getContainer();
-      let mapHoldTimer = null;
-      let mapHoldCandidate = null;
-      let suppressedMapClick = null;
-      const activeTouchPointers = new Set();
-      const clearMapHoldCandidate = () => {
-        if (mapHoldTimer !== null) {
-          window.clearTimeout(mapHoldTimer);
-          mapHoldTimer = null;
-        }
-        mapHoldCandidate = null;
-      };
-      const clearMapHoldGesture = () => {
-        clearMapHoldCandidate();
-        activeTouchPointers.clear();
-        suppressedMapClick = null;
-      };
-      const isNearSuppressedMapClick = (event) => {
-        if (!suppressedMapClick) return false;
-        if (performance.now() >= suppressedMapClick.expiresAt) {
-          suppressedMapClick = null;
-          return false;
-        }
-        return Math.hypot(
-          event.clientX - suppressedMapClick.x,
-          event.clientY - suppressedMapClick.y,
-        ) <= mapHoldClickTolerance;
-      };
-      const onMapPointerDown = (event) => {
-        if (event.pointerType !== "touch") return;
-        activeTouchPointers.add(event.pointerId);
-        if (activeTouchPointers.size !== 1 || event.isPrimary === false) {
-          clearMapHoldCandidate();
-          return;
-        }
-        const target = event.target;
-        const blockedTarget =
-          target instanceof Element &&
-          target.closest(".leaflet-control, a, button, input, select, textarea");
-        const legId = activeLeg()?.id;
-        if (!state.playing || !legId || blockedTarget) return;
-
-        clearMapHoldCandidate();
-        const candidate = {
-          pointerId: event.pointerId,
-          startX: event.clientX,
-          startY: event.clientY,
-          viewId: state.viewId,
-          legId,
-          motionToken: state.motionResumeToken,
-          triggered: false,
-        };
-        mapHoldCandidate = candidate;
-        mapHoldTimer = window.setTimeout(() => {
-          mapHoldTimer = null;
-          if (
-            mapHoldCandidate !== candidate ||
-            activeTouchPointers.size !== 1 ||
-            !activeTouchPointers.has(candidate.pointerId) ||
-            !state.playing ||
-            document.hidden ||
-            state.viewId !== candidate.viewId ||
-            activeLeg()?.id !== candidate.legId ||
-            state.motionResumeToken !== candidate.motionToken
-          ) {
-            clearMapHoldCandidate();
-            return;
-          }
-          candidate.triggered = true;
-          suppressedMapClick = {
-            x: candidate.startX,
-            y: candidate.startY,
-            expiresAt: performance.now() + 1200,
-          };
-          pausePlaybackForMapInteraction();
-        }, mapHoldPauseDurationMs);
-      };
-      const onMapPointerMove = (event) => {
-        const candidate = mapHoldCandidate;
-        if (
-          event.pointerType !== "touch" ||
-          !candidate ||
-          candidate.triggered ||
-          event.pointerId !== candidate.pointerId
-        ) return;
-        if (
-          Math.hypot(
-            event.clientX - candidate.startX,
-            event.clientY - candidate.startY,
-          ) > mapHoldMoveTolerance
-        ) clearMapHoldCandidate();
-      };
-      const finishMapHold = (event) => {
-        if (event.pointerType !== "touch") return;
-        activeTouchPointers.delete(event.pointerId);
-        const candidate = mapHoldCandidate;
-        if (!candidate || event.pointerId !== candidate.pointerId) return;
-        if (candidate.triggered && event.type === "pointerup") {
-          suppressedMapClick = {
-            x: event.clientX,
-            y: event.clientY,
-            expiresAt: performance.now() + 700,
-          };
-        }
-        clearMapHoldCandidate();
-      };
-      const onMapClickCapture = (event) => {
-        if (!isNearSuppressedMapClick(event)) return;
-        suppressedMapClick = null;
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-      };
-      const onMapContextMenuCapture = (event) => {
-        if (!mapHoldCandidate && !isNearSuppressedMapClick(event)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-      };
       const pauseForMovingMapGesture = () => {
-        clearMapHoldCandidate();
         pausePlaybackForMapInteraction();
+      };
+      const pauseForMapTap = (event) => {
+        if (!state.playing) return;
+        const target = event.originalEvent?.target;
+        const interactiveTarget =
+          target instanceof Element &&
+          target.closest(
+            ".leaflet-control, .leaflet-marker-icon, .leaflet-interactive, " +
+              ".leaflet-tooltip, a, button, input, select, textarea",
+          );
+        if (!interactiveTarget) pausePlaybackForMapInteraction();
+      };
+      const pauseForMapControl = (event) => {
+        const target = event.target;
+        if (
+          state.playing &&
+          target instanceof Element &&
+          target.closest(".leaflet-control-zoom a")
+        ) pausePlaybackForMapInteraction();
       };
       const onMultiTouchStart = (event) => {
         if (event.touches.length < 2) return;
-        clearMapHoldCandidate();
         pausePlaybackForMapInteraction();
       };
-      const cleanupMapHoldGesture = () => {
-        clearMapHoldGesture();
-        window.removeEventListener("pointermove", onMapPointerMove, true);
-        window.removeEventListener("pointerup", finishMapHold, true);
-        window.removeEventListener("pointercancel", finishMapHold, true);
-        window.removeEventListener("blur", clearMapHoldGesture);
-        window.removeEventListener("pagehide", clearMapHoldGesture);
-        document.removeEventListener("visibilitychange", onMapVisibilityChange);
-      };
-      const onMapVisibilityChange = () => {
-        if (document.hidden) clearMapHoldGesture();
+      const cleanupMapGestures = () => {
+        map.off("click", pauseForMapTap);
+        mapContainer.removeEventListener("wheel", pauseForMovingMapGesture);
+        mapContainer.removeEventListener("touchstart", onMultiTouchStart);
+        mapContainer.removeEventListener("click", pauseForMapControl, true);
       };
 
       map.on("zoomend moveend", () => updateMotionVehicle(state.motionProgress));
+      map.on("click", pauseForMapTap);
       map.on("dragstart boxzoomstart dblclick", pauseForMovingMapGesture);
-      map.once("unload", cleanupMapHoldGesture);
+      map.once("unload", cleanupMapGestures);
       mapContainer.addEventListener("wheel", pauseForMovingMapGesture, {
         passive: true,
       });
       mapContainer.addEventListener("touchstart", onMultiTouchStart, {
         passive: true,
       });
-      mapContainer.addEventListener("pointerdown", onMapPointerDown, {
-        passive: true,
-      });
-      mapContainer.addEventListener("click", onMapClickCapture, true);
-      mapContainer.addEventListener("contextmenu", onMapContextMenuCapture, true);
-      window.addEventListener("pointermove", onMapPointerMove, {
-        capture: true,
-        passive: true,
-      });
-      window.addEventListener("pointerup", finishMapHold, {
-        capture: true,
-        passive: true,
-      });
-      window.addEventListener("pointercancel", finishMapHold, {
-        capture: true,
-        passive: true,
-      });
-      window.addEventListener("blur", clearMapHoldGesture);
-      window.addEventListener("pagehide", clearMapHoldGesture);
-      document.addEventListener("visibilitychange", onMapVisibilityChange);
+      mapContainer.addEventListener("click", pauseForMapControl, true);
 
       const resizeObserver = new ResizeObserver(() => {
         if (elements.streetMap.hidden) return;
@@ -1707,7 +1616,13 @@
           sticky: true,
           opacity: 1,
         });
-        polyline.on("click", () => setActiveLeg(index));
+        polyline.on("click", () => {
+          if (index === state.activeLegIndex && state.playing) {
+            pausePlaybackForMapInteraction();
+            return;
+          }
+          setActiveLeg(index);
+        });
         polyline.options.travelCoordinates = coordinates;
         state.routeLayers.set(leg.id, polyline);
       });
@@ -1809,8 +1724,11 @@
       0,
       Number(leg?.playback?.endpointDwellMs) || endpointDwellDurationMs,
     );
-    state.followCamera = false;
-    releaseFollowCameraMovement();
+    setMotionCameraPhase("arrival");
+    if (!cameraMatchesEndpoint(leg, "end")) {
+      state.streetMap?.stop();
+      focusRouteEndpoint(leg, "end", false);
+    }
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
@@ -1824,7 +1742,7 @@
     state.motionProgress = 0;
     state.motionBearing = null;
     state.motionLastPaintAt = 0;
-    state.followLastPaintAt = 0;
+    setMotionCameraPhase("idle");
     elements.routeProgress.style.setProperty("--motion-progress", "0");
   }
 
@@ -2018,7 +1936,6 @@
       "--motion-progress",
       String(Math.max(0, Math.min(1, progress))),
     );
-    followMotionVehicle(sample.latlng);
   }
 
   function syncMotionVehicle(leg) {
@@ -2146,11 +2063,91 @@
     });
   }
 
-  function focusLeg(leg = activeLeg(), animate = true) {
+  function routeCameraCoordinates(leg) {
+    if (state.motionLegId === leg?.id && state.motionRoute?.points?.length) {
+      return state.motionRoute.points;
+    }
+    return leg ? legCoordinates(leg, stopMap()) : [];
+  }
+
+  function routeCloseZoom(leg) {
+    return leg?.mode === "plane" ? 11 : 14;
+  }
+
+  function alignStreetMapWorld(coordinates) {
+    if (!state.streetMap?._loaded || !coordinates.length) return;
+    const longitudes = coordinates.map((coordinate) => Number(coordinate[1]));
+    const routeCenterLongitude =
+      (Math.min(...longitudes) + Math.max(...longitudes)) / 2;
+    const current = state.streetMap.getCenter();
+    let alignedLongitude = current.lng;
+    while (alignedLongitude - routeCenterLongitude > 180) alignedLongitude -= 360;
+    while (alignedLongitude - routeCenterLongitude < -180) alignedLongitude += 360;
+    if (Math.abs(alignedLongitude - current.lng) < 180) return;
+    state.streetMap.setView(
+      [current.lat, alignedLongitude],
+      state.streetMap.getZoom(),
+      { animate: false },
+    );
+  }
+
+  function routeEndpointView(leg, endpoint = "start") {
+    if (!state.streetMap || !leg) return null;
+    const coordinates = routeCameraCoordinates(leg);
+    alignStreetMapWorld(coordinates);
+    const latlng = endpoint === "end" ? coordinates.at(-1) : coordinates[0];
+    if (!latlng) return null;
+    const zoom = routeCloseZoom(leg);
+    const padding = mapPadding();
+    const topLeft = window.L.point(padding.paddingTopLeft);
+    const bottomRight = window.L.point(padding.paddingBottomRight);
+    const centerOffset = bottomRight.subtract(topLeft).divideBy(2);
+    const projected = state.streetMap
+      .project(window.L.latLng(latlng), zoom)
+      .add(centerOffset);
+    return {
+      center: state.streetMap.unproject(projected, zoom),
+      latlng,
+      zoom,
+    };
+  }
+
+  function cameraMatchesEndpoint(leg, endpoint = "start") {
+    const view = routeEndpointView(leg, endpoint);
+    if (!view || !state.streetMap?._loaded) return false;
+    const centerDrift = state.streetMap
+      .project(state.streetMap.getCenter(), view.zoom)
+      .distanceTo(state.streetMap.project(view.center, view.zoom));
+    return (
+      centerDrift < 2 &&
+      Math.abs(state.streetMap.getZoom() - view.zoom) < 0.01
+    );
+  }
+
+  function focusRouteEndpoint(
+    leg = activeLeg(),
+    endpoint = "start",
+    animate = true,
+    duration = 0.65,
+  ) {
+    const view = routeEndpointView(leg, endpoint);
+    if (!view || !state.streetMap) return;
+    if (animate && !reducedMotion) {
+      state.streetMap.flyTo(view.center, view.zoom, {
+        animate: true,
+        duration,
+      });
+    } else {
+      state.streetMap.setView(view.center, view.zoom, { animate: false });
+    }
+  }
+
+  function focusLeg(leg = activeLeg(), animate = true, duration = 1.05) {
     const trip = currentTrip();
     if (!state.streetMap || !trip || !leg) return;
     const stops = stopMap(trip);
-    const coordinates = legCoordinates(leg, stops);
+    const coordinates = routeCameraCoordinates(leg);
+    alignStreetMapWorld(coordinates);
     const bounds = window.L.latLngBounds(coordinates);
     const from = stops.get(leg.from);
     const to = stops.get(leg.to);
@@ -2165,207 +2162,265 @@
     else if (span < 0.025) maxZoom = 17;
     else if (span < 0.12) maxZoom = 15;
     else if (span < 0.55) maxZoom = 12;
+    maxZoom = Math.min(maxZoom, routeCloseZoom(leg) - 1);
     state.streetMap.flyToBounds(bounds, {
       ...mapPadding(),
       maxZoom,
       animate: animate && !reducedMotion,
-      duration: 0.95,
+      duration,
     });
   }
 
-  function followsGroundVehicle(leg = activeLeg()) {
-    return ["shinkansen", "train", "bus"].includes(leg?.mode);
+  function setMotionCameraPhase(phase) {
+    state.motionCameraPhase = phase;
+    elements.mapStage.dataset.routeCamera = phase;
   }
 
-  function routeFollowZoom(leg, route = state.motionRoute) {
-    const configuredZoom = Number(leg?.playback?.followZoom);
-    if (Number.isFinite(configuredZoom)) return configuredZoom;
-    const distance = route?.total || 0;
-    if (leg?.mode === "train") {
-      if (distance <= 25000) return 14;
-      if (distance <= 80000) return 13;
-      return 11;
-    }
-    if (leg?.mode === "bus") return distance <= 40000 ? 13 : 11;
-    if (leg?.mode === "shinkansen") {
-      if (distance <= 200000) return 10;
-      if (distance <= 600000) return 9;
-      return 8;
-    }
-    return 8;
+  function routeArrivalLeadMs(duration) {
+    return Math.min(
+      routeCameraArrivalMaximumMs,
+      Math.max(routeCameraArrivalMinimumMs, duration * 0.12),
+    );
   }
 
-  function focusCurrentMotionVehicle(animate = true) {
-    const leg = activeLeg();
-    if (!state.streetMap || !state.motionRoute || !leg) {
+  function focusRouteCameraForProgress(leg = activeLeg(), animate = true) {
+    if (!leg || !state.motionRoute) return;
+    const duration = motionDuration(leg);
+    const remaining = Math.max(0, duration - state.motionElapsedMs);
+    if (state.motionProgress <= 0.001) {
+      setMotionCameraPhase("start");
+      focusRouteEndpoint(leg, "start", animate);
+    } else if (
+      state.motionProgress >= 1 ||
+      remaining <= routeArrivalLeadMs(duration)
+    ) {
+      setMotionCameraPhase("arrival");
+      focusRouteEndpoint(leg, "end", animate);
+    } else {
+      setMotionCameraPhase("overview");
       focusLeg(leg, animate);
-      return;
     }
-    const current = sampleMotionRoute(
-      state.motionRoute,
-      state.motionProgress,
-    ).latlng;
-    state.streetMap.flyTo(current, routeFollowZoom(leg), {
-      animate: animate && !reducedMotion,
-      duration: 0.62,
-    });
-  }
-
-  function releaseFollowCameraMovement() {
-    if (state.followReleaseTimer !== null) {
-      window.clearTimeout(state.followReleaseTimer);
-      state.followReleaseTimer = null;
-    }
-    if (state.followReleaseHandler && state.streetMap) {
-      state.streetMap.off("moveend", state.followReleaseHandler);
-    }
-    state.followReleaseHandler = null;
-    state.followCameraMoving = false;
-  }
-
-  function followMotionVehicle(latlng) {
-    if (
-      !state.playing ||
-      !state.followCamera ||
-      state.cameraPreparing ||
-      !state.streetMap?._loaded
-    ) return;
-    const timestamp = performance.now();
-    const interval = window.innerWidth < 821 ? 450 : 350;
-    if (
-      state.followCameraMoving ||
-      timestamp - state.followLastPaintAt < interval
-    ) return;
-
-    const point = state.streetMap.latLngToContainerPoint(latlng);
-    const size = state.streetMap.getSize();
-    const center = size.divideBy(2);
-    const maximumDrift = window.innerWidth < 821 ? 55 : 78;
-    if (point.distanceTo(center) <= maximumDrift) return;
-
-    state.followLastPaintAt = timestamp;
-    state.followCameraMoving = true;
-    const release = () => releaseFollowCameraMovement();
-    state.followReleaseHandler = release;
-    state.streetMap.once("moveend", release);
-    state.followReleaseTimer = window.setTimeout(release, reducedMotion ? 80 : 520);
-    state.streetMap.panTo(latlng, {
-      animate: !reducedMotion,
-      duration: 0.32,
-      easeLinearity: 0.5,
-    });
   }
 
   function cancelMotionCameraPreparation() {
     state.motionResumeToken += 1;
     state.cameraPreparing = false;
+    if (state.motionCameraWaitCleanup) {
+      const cleanup = state.motionCameraWaitCleanup;
+      state.motionCameraWaitCleanup = null;
+      cleanup();
+    }
     if (state.motionResumeTimer !== null) {
       window.clearTimeout(state.motionResumeTimer);
       state.motionResumeTimer = null;
     }
-    if (state.motionResumeHandler && state.streetMap) {
-      state.streetMap.off("moveend", state.motionResumeHandler);
-    }
-    state.motionResumeHandler = null;
   }
 
-  function preparePlaybackCamera(options = {}) {
+  function runPlaybackCameraTransition(
+    token,
+    legId,
+    moveCamera,
+    onSettled,
+    fallbackMs,
+  ) {
+    const map = state.streetMap;
+    if (!map || reducedMotion) {
+      moveCamera();
+      window.requestAnimationFrame(onSettled);
+      return;
+    }
+
+    const leg = activeLeg();
+    if (leg?.id === legId) alignStreetMapWorld(routeCameraCoordinates(leg));
+
+    if (state.motionCameraWaitCleanup) {
+      const previousCleanup = state.motionCameraWaitCleanup;
+      state.motionCameraWaitCleanup = null;
+      previousCleanup();
+    }
+    if (state.motionResumeTimer !== null) {
+      window.clearTimeout(state.motionResumeTimer);
+      state.motionResumeTimer = null;
+    }
+
+    const tiles = state.streetTiles;
+    let finished = false;
+    let moveFinished = false;
+    let fallbackTimer = null;
+    const cleanup = () => {
+      map.off("moveend", handleMoveEnd);
+      tiles?.off("load", finish);
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+    };
+    const cancel = () => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      if (state.motionCameraWaitCleanup === cancel) {
+        state.motionCameraWaitCleanup = null;
+      }
+    };
+    const isCurrent = () =>
+      token === state.motionResumeToken &&
+      state.playing &&
+      activeLeg()?.id === legId;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      if (state.motionCameraWaitCleanup === cancel) {
+        state.motionCameraWaitCleanup = null;
+      }
+      if (!isCurrent()) return;
+      window.requestAnimationFrame(() => {
+        if (isCurrent()) onSettled();
+      });
+    };
+    const waitForVisibleTiles = () => {
+      if (finished) return;
+      if (!isCurrent()) {
+        finish();
+        return;
+      }
+      if (!tiles?.isLoading?.()) {
+        finish();
+        return;
+      }
+      tiles.once("load", finish);
+      fallbackTimer = window.setTimeout(
+        finish,
+        window.innerWidth < 821 ? 550 : 350,
+      );
+    };
+    function handleMoveEnd() {
+      if (moveFinished || finished) return;
+      moveFinished = true;
+      map.off("moveend", handleMoveEnd);
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+      window.requestAnimationFrame(waitForVisibleTiles);
+    }
+
+    state.motionCameraWaitCleanup = cancel;
+    map.once("moveend", handleMoveEnd);
+    fallbackTimer = window.setTimeout(handleMoveEnd, fallbackMs);
+    moveCamera();
+  }
+
+  function preparePlaybackCamera() {
     const leg = activeLeg();
     if (!state.playing || !state.streetMap || !leg || !state.motionRoute) return;
     cancelMotionCameraPreparation();
-    releaseFollowCameraMovement();
     state.streetMap.stop();
     const token = state.motionResumeToken;
     const legId = leg.id;
-    const followsVehicle = followsGroundVehicle(leg);
-    const forceExact = Boolean(options.forceExact);
-    const current = followsVehicle
-      ? sampleMotionRoute(state.motionRoute, state.motionProgress).latlng
-      : null;
-    const zoom = followsVehicle ? routeFollowZoom(leg) : null;
-    const readyAt = performance.now() + (reducedMotion ? 0 : followsVehicle ? 600 : 900);
+    const duration = motionDuration(leg);
+    const remaining = Math.max(0, duration - state.motionElapsedMs);
     state.cameraPreparing = true;
-    state.followCamera = followsVehicle;
-    state.followLastPaintAt = 0;
     renderPlaybackState();
-    let exactCorrectionAttempts = 0;
+    updateStreetStyles();
 
-    const finish = () => {
+    const resumeMotion = () => {
       if (token !== state.motionResumeToken) return;
-      const waitRemaining = readyAt - performance.now();
-      if (waitRemaining > 16) {
-        if (state.motionResumeTimer !== null) {
-          window.clearTimeout(state.motionResumeTimer);
-        }
-        state.motionResumeTimer = window.setTimeout(finish, waitRemaining);
-        return;
-      }
-      if (state.motionResumeTimer !== null) {
-        window.clearTimeout(state.motionResumeTimer);
-        state.motionResumeTimer = null;
-      }
-      if (state.motionResumeHandler && state.streetMap) {
-        state.streetMap.off("moveend", state.motionResumeHandler);
-      }
-      state.motionResumeHandler = null;
+      state.motionResumeTimer = null;
       if (!state.playing || activeLeg()?.id !== legId) return;
-      const centerDriftPixels = followsVehicle
-        ? state.streetMap
-            .latLngToContainerPoint(current)
-            .distanceTo(state.streetMap.getSize().divideBy(2))
-        : 0;
-      if (
-        forceExact &&
-        followsVehicle &&
-        exactCorrectionAttempts < 2 &&
-        (centerDriftPixels > 1.5 ||
-          Math.abs(state.streetMap.getZoom() - zoom) >= 0.01)
-      ) {
-        exactCorrectionAttempts += 1;
-        state.streetMap.setView(current, zoom, { animate: false });
-        window.requestAnimationFrame(finish);
-        return;
-      }
       state.cameraPreparing = false;
+      renderPlaybackState();
+      updateStreetStyles();
       requestMotionFrame();
     };
-    state.motionResumeHandler = finish;
-    state.streetMap.once("moveend", finish);
 
-    if (followsVehicle) {
-      if (forceExact) {
-        state.motionResumeTimer = window.setTimeout(
-          finish,
-          reducedMotion ? 80 : 650,
+    if (state.motionProgress <= 0.001) {
+      const alreadyAtStart = cameraMatchesEndpoint(leg, "start");
+      setMotionCameraPhase("start");
+      const launchCruise = () => {
+        if (
+          token !== state.motionResumeToken ||
+          !state.playing ||
+          activeLeg()?.id !== legId
+        ) return;
+        state.motionResumeTimer = null;
+        setMotionCameraPhase("overview");
+        runPlaybackCameraTransition(
+          token,
+          legId,
+          () => focusLeg(leg, !reducedMotion, 1.05),
+          resumeMotion,
+          1300,
         );
-        state.streetMap.setView(current, zoom, { animate: false });
-        window.requestAnimationFrame(finish);
-        return;
-      }
-      const samePosition = state.streetMap.getCenter().distanceTo(current) < 8;
-      const sameZoom = Math.abs(state.streetMap.getZoom() - zoom) < 0.01;
-      state.motionResumeTimer = window.setTimeout(
-        finish,
-        reducedMotion ? 80 : 850,
-      );
-      if (reducedMotion || (samePosition && sameZoom)) {
-        state.streetMap.setView(current, zoom, { animate: false });
-        window.requestAnimationFrame(finish);
+      };
+      const holdAtStart = () => {
+        if (
+          token !== state.motionResumeToken ||
+          !state.playing ||
+          activeLeg()?.id !== legId
+        ) return;
+        state.motionResumeTimer = window.setTimeout(
+          launchCruise,
+          routeCameraIntroHoldMs,
+        );
+      };
+      if (alreadyAtStart || reducedMotion) {
+        focusRouteEndpoint(leg, "start", false);
+        holdAtStart();
       } else {
-        state.streetMap.flyTo(current, zoom, { animate: true, duration: 0.62 });
+        runPlaybackCameraTransition(
+          token,
+          legId,
+          () => focusRouteEndpoint(leg, "start", true, 0.62),
+          holdAtStart,
+          850,
+        );
       }
       return;
     }
 
-    focusLeg(leg, !reducedMotion);
-    state.motionResumeTimer = window.setTimeout(finish, reducedMotion ? 80 : 1200);
+    if (remaining <= routeArrivalLeadMs(duration)) {
+      setMotionCameraPhase("arrival");
+      runPlaybackCameraTransition(
+        token,
+        legId,
+        () => focusRouteEndpoint(leg, "end", !reducedMotion, 0.62),
+        resumeMotion,
+        850,
+      );
+      return;
+    }
+
+    setMotionCameraPhase("overview");
+    runPlaybackCameraTransition(
+      token,
+      legId,
+      () => focusLeg(leg, !reducedMotion, 0.78),
+      resumeMotion,
+      1050,
+    );
+  }
+
+  function updatePlaybackCamera(leg, duration) {
+    if (
+      !state.playing ||
+      state.cameraPreparing ||
+      state.motionCameraPhase === "arrival"
+    ) return;
+    const remaining = Math.max(0, duration - state.motionElapsedMs);
+    if (remaining > routeArrivalLeadMs(duration)) return;
+    setMotionCameraPhase("arrival");
+    const transitionDuration = Math.min(
+      0.95,
+      Math.max(0.45, remaining / 1000 * 0.82),
+    );
+    focusRouteEndpoint(leg, "end", !reducedMotion, transitionDuration);
   }
 
   function pausePlaybackForMapInteraction() {
     if (!state.playing) return;
-    const atEndpoint = state.endpointDwelling;
     stopPlayback();
-    if (!atEndpoint) state.streetMap?.stop();
   }
 
   function focusStop(stop) {
@@ -2440,12 +2495,17 @@
       elements.streetMap.hidden = true;
       elements.streetMap.setAttribute("aria-hidden", "true");
       state.streetMap?.stop();
+      if (state.overviewGlobeFailed) {
+        stopOverviewFlightPlanes();
+        showMapFallback();
+        return;
+      }
       state.globe?.resumeAnimation();
       refreshOverviewGlobe();
       applyOverviewRotation();
       initOverviewFlightPlanes();
       startOverviewFlightPlanes();
-      if (focusInitial) focusGlobe(data.overview.initialView, 1250);
+      if (focusInitial) focusGlobe(overviewInitialView(), 1250);
       return;
     }
 
@@ -2468,7 +2528,10 @@
     window.requestAnimationFrame(() => {
       state.streetMap.invalidateSize({ pan: false });
       if (focusInitial) {
-        if (trip.legs.length) focusLeg(activeLeg(trip), false);
+        if (trip.legs.length) {
+          setMotionCameraPhase("start");
+          focusRouteEndpoint(activeLeg(trip), "start", false);
+        }
         else fitTripBounds(trip, false);
       }
       window.requestAnimationFrame(() => updateMotionVehicle(state.motionProgress));
@@ -2503,8 +2566,6 @@
     if (!trip?.legs.length) return;
     if (!options.keepPlaying) stopPlayback({ refresh: false });
     cancelMotionCameraPreparation();
-    releaseFollowCameraMovement();
-    state.followCamera = false;
     state.activeLegIndex = (index + trip.legs.length) % trip.legs.length;
     resetMotionProgress();
     state.selectedStopId = null;
@@ -2514,9 +2575,12 @@
     renderPlaybackState();
     updateStreetStyles();
     if (state.playing) {
-      preparePlaybackCamera({ forceExact: Boolean(options.keepPlaying) });
+      preparePlaybackCamera();
     }
-    else focusLeg();
+    else {
+      setMotionCameraPhase("start");
+      focusRouteEndpoint(activeLeg(trip), "start");
+    }
   }
 
   function selectStop(stopId, opener) {
@@ -2568,6 +2632,7 @@
       state.motionLastPaintAt = timestamp;
       updateMotionVehicle(state.motionProgress);
     }
+    updatePlaybackCamera(leg, duration);
 
     if (state.motionProgress >= 1) {
       beginEndpointDwell(leg, duration);
@@ -2599,7 +2664,7 @@
   function stopPlayback(options = {}) {
     const wasPlaying = state.playing;
     state.playing = false;
-    state.followCamera = false;
+    state.streetMap?.stop();
     if (state.endpointDwelling) {
       cancelEndpointDwell({ preserveRemaining: true });
     }
@@ -2610,7 +2675,6 @@
       updateMotionVehicle(state.motionProgress);
     }
     cancelMotionCameraPreparation();
-    releaseFollowCameraMovement();
     if (state.motionFrame !== null) window.cancelAnimationFrame(state.motionFrame);
     state.motionFrame = null;
     state.motionStartedAt = null;
@@ -2904,8 +2968,26 @@
     }
 
     try {
+      const globeTextureUrl = "./trip_images/globe/earth-night.jpg";
+      let globeReadyScheduled = false;
+      const handleGlobeReady = () => {
+        if (state.overviewGlobeReady || globeReadyScheduled) return;
+        globeReadyScheduled = true;
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            globeReadyScheduled = false;
+            if (!state.globe || state.overviewGlobeReady) return;
+            state.overviewGlobeReady = true;
+            focusGlobe(overviewInitialView(), 0);
+            initOverviewFlightPlanes();
+            startOverviewFlightPlanes();
+            applyOverviewRotation();
+            scheduleOverviewCityLabels(true);
+          });
+        });
+      };
       const globe = window.Globe()(elements.globe)
-        .globeImageUrl("./trip_images/globe/earth-night.jpg")
+        .globeImageUrl(globeTextureUrl)
         .backgroundColor("rgba(0,0,0,0)")
         .showAtmosphere(true)
         .atmosphereColor("#3b9fbc")
@@ -2957,6 +3039,34 @@
         .onZoom(() => scheduleOverviewCityLabels());
 
       state.globe = globe;
+      let globeTextureCheckAttempts = 0;
+      const waitForGlobeTexture = () => {
+        if (state.overviewGlobeReady || state.overviewGlobeFailed) return;
+        let textureReady = false;
+        try {
+          const texture = globe.globeMaterial()?.map;
+          const image = texture?.image;
+          textureReady = Boolean(
+            texture && image &&
+            (typeof image.complete !== "boolean" || image.complete) &&
+            (typeof image.naturalWidth !== "number" || image.naturalWidth > 0),
+          );
+        } catch {
+          textureReady = false;
+        }
+        if (textureReady) {
+          handleGlobeReady();
+          return;
+        }
+        globeTextureCheckAttempts += 1;
+        if (globeTextureCheckAttempts < 600) {
+          window.requestAnimationFrame(waitForGlobeTexture);
+          return;
+        }
+        state.overviewGlobeFailed = true;
+        stopOverviewFlightPlanes();
+        if (isOverview()) showMapFallback();
+      };
       globe.controls().enableDamping = true;
       globe.controls().dampingFactor = 0.08;
       globe.controls().minDistance = 112;
@@ -2974,6 +3084,13 @@
             Math.min(window.devicePixelRatio || 1, width < 821 ? 1.25 : 1.55),
           );
           scheduleOverviewCityLabels(true);
+          const layoutKey = width < height ? "portrait" : "landscape";
+          const layoutChanged =
+            state.overviewLayoutKey && state.overviewLayoutKey !== layoutKey;
+          state.overviewLayoutKey = layoutKey;
+          if (layoutChanged && state.overviewGlobeReady && isOverview()) {
+            focusGlobe(overviewInitialView(), 450);
+          }
         }
       };
       const resizeObserver = new ResizeObserver(() => window.requestAnimationFrame(resize));
@@ -2983,23 +3100,23 @@
       const canvas = elements.globe.querySelector("canvas");
       canvas?.addEventListener("webglcontextlost", (event) => {
         event.preventDefault();
+        state.overviewGlobeFailed = true;
+        state.overviewGlobeReady = false;
         stopPlayback();
         stopOverviewFlightPlanes();
         showMapFallback();
       });
+      canvas?.addEventListener("webglcontextrestored", () => {
+        state.overviewGlobeFailed = false;
+        if (isOverview()) elements.fallback.hidden = true;
+        handleGlobeReady();
+      });
 
       refreshOverviewGlobe();
       initOverviewFlightPlanes();
-      startOverviewFlightPlanes();
       applyOverviewRotation();
-      globe.onGlobeReady(() => {
-        focusGlobe(data.overview.initialView, 0);
-        initOverviewFlightPlanes();
-        startOverviewFlightPlanes();
-        applyOverviewRotation();
-        scheduleOverviewCityLabels(true);
-      });
-      focusGlobe(data.overview.initialView, 0);
+      focusGlobe(overviewInitialView(), 0);
+      window.requestAnimationFrame(waitForGlobeTexture);
     } catch (error) {
       console.error("Travel globe initialization failed", error);
       showMapFallback();
@@ -3047,11 +3164,7 @@
         renderRouteCard();
         renderPlaybackState();
         updateStreetStyles();
-        if (followsGroundVehicle()) {
-          focusCurrentMotionVehicle();
-        } else {
-          focusLeg();
-        }
+        focusRouteCameraForProgress();
       }
       return;
     }

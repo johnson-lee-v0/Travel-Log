@@ -1260,7 +1260,7 @@
     });
   }
 
-  function routeVehicleMarkup(mode) {
+  function routeVehicleMarkup(mode, model) {
     if (mode === "plane") {
       return `
         <svg class="route-vehicle__svg" viewBox="0 0 72 40" aria-hidden="true">
@@ -1271,14 +1271,63 @@
           <path class="route-vehicle__glass" d="M57.8 17.1c4 .3 7 1.3 8.4 2.9-1.4 1.6-4.4 2.6-8.4 2.9Z"/>
         </svg>`;
     }
+    if (model === "n700s") {
+      return `
+        <svg class="route-vehicle__svg" viewBox="0 0 88 34" aria-hidden="true">
+          <path class="route-vehicle__body" d="M6 7.5h41c10.9 0 20.3 2.1 27.4 6.1 5.3 3 9 5.7 11 8-3.4 3.4-8.7 5.8-15.9 7.4-5.9 1.3-13.1 2-21.5 2H6a3 3 0 0 1-3-3V10.5a3 3 0 0 1 3-3Z"/>
+          <path class="route-vehicle__shade" d="M3 25.6h47.6c12.5 0 22.9-1.6 31.4-4.9 1.5.4 2.6.7 3.4.9-3.4 3.4-8.7 5.8-15.9 7.4-5.9 1.3-13.1 2-21.5 2H6a3 3 0 0 1-3-3Z"/>
+          <path class="route-vehicle__highlight" d="M6 9.1h41c9.7 0 18.2 1.8 24.9 5.2l-4 1.6c-5.6-2.2-12.6-3.3-20.9-3.3H6Z"/>
+          <path class="route-vehicle__glass" d="M56.2 11.6c6.8.8 12.7 2.7 17.8 5.6l-6.5 2.2c-3.9-1.8-8.2-3-13-3.6Z"/>
+          <g class="route-vehicle__windows">
+            <rect x="11" y="12.4" width="7.5" height="4.2" rx="1.3"/>
+            <rect x="21" y="12.4" width="7.5" height="4.2" rx="1.3"/>
+            <rect x="31" y="12.4" width="7.5" height="4.2" rx="1.3"/>
+            <rect x="41" y="12.4" width="7.5" height="4.2" rx="1.3"/>
+          </g>
+          <path class="route-vehicle__door" d="M49.8 12.1v13.3M47.9 12.1h3.8"/>
+          <path class="route-vehicle__accent route-vehicle__accent--shinkansen" d="M4.5 24.4h46c11.9 0 21.8-1.7 30-5"/>
+          <path class="route-vehicle__undercarriage" d="M14 30h35.5c5.2 0 10-.4 14.5-1.2l-2.4 3H16.5Z"/>
+          <ellipse class="route-vehicle__light route-vehicle__light--shinkansen" cx="80.2" cy="21.1" rx="2.2" ry="1"/>
+        </svg>`;
+    }
     if (mode === "shinkansen") {
       return `
-        <svg class="route-vehicle__svg" viewBox="0 0 72 32" aria-hidden="true">
-          <path class="route-vehicle__body" d="M6 4h37c10.4 0 20.2 4.5 25.5 12C63.2 23.5 53.4 28 43 28H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3Z"/>
-          <path class="route-vehicle__shade" d="M3 16h65.5C63.2 23.5 53.4 28 43 28H6a3 3 0 0 1-3-3Z"/>
-          <path class="route-vehicle__highlight" d="M6 6h37c8.3 0 16.3 3.2 21.6 8H6Z"/>
-          <path class="route-vehicle__glass" d="M15 8.4h28c6.7 0 12.8 1.9 17.5 5.3H15Z"/>
-          <path class="route-vehicle__accent route-vehicle__accent--shinkansen" d="M5 21h39.5c8.3 0 15.8-2.1 21-5.8"/>
+        <svg class="route-vehicle__svg" viewBox="0 0 88 34" aria-hidden="true">
+          <path class="route-vehicle__body" d="M6 7.5h41c10.9 0 20.3 2.1 27.4 6.1 5.3 3 9 5.7 11 8-3.4 3.4-8.7 5.8-15.9 7.4-5.9 1.3-13.1 2-21.5 2H6a3 3 0 0 1-3-3V10.5a3 3 0 0 1 3-3Z"/>
+          <path class="route-vehicle__shade" d="M3 25.6h47.6c12.5 0 22.9-1.6 31.4-4.9 1.5.4 2.6.7 3.4.9-3.4 3.4-8.7 5.8-15.9 7.4-5.9 1.3-13.1 2-21.5 2H6a3 3 0 0 1-3-3Z"/>
+          <path class="route-vehicle__highlight" d="M6 9.1h41c9.7 0 18.2 1.8 24.9 5.2l-4 1.6c-5.6-2.2-12.6-3.3-20.9-3.3H6Z"/>
+          <path class="route-vehicle__glass" d="M56.2 11.6c6.8.8 12.7 2.7 17.8 5.6l-6.5 2.2c-3.9-1.8-8.2-3-13-3.6Z"/>
+          <g class="route-vehicle__windows">
+            <rect x="11" y="12.4" width="7.5" height="4.2" rx="1.3"/>
+            <rect x="21" y="12.4" width="7.5" height="4.2" rx="1.3"/>
+            <rect x="31" y="12.4" width="7.5" height="4.2" rx="1.3"/>
+            <rect x="41" y="12.4" width="7.5" height="4.2" rx="1.3"/>
+          </g>
+          <path class="route-vehicle__door" d="M49.8 12.1v13.3"/>
+          <path class="route-vehicle__accent route-vehicle__accent--shinkansen" d="M4.5 24.4h46c11.9 0 21.8-1.7 30-5"/>
+          <path class="route-vehicle__undercarriage" d="M14 30h35.5c5.2 0 10-.4 14.5-1.2l-2.4 3H16.5Z"/>
+          <ellipse class="route-vehicle__light route-vehicle__light--shinkansen" cx="80.2" cy="21.1" rx="2.2" ry="1"/>
+        </svg>`;
+    }
+    if (model === "yufuin-no-mori") {
+      return `
+        <svg class="route-vehicle__svg" viewBox="0 0 82 38" aria-hidden="true">
+          <path class="route-vehicle__body" d="M6 5h49c10.3 0 18.2 5.4 21.2 14.5L75 29c-.4 3.2-3.1 5.5-6.3 5.5H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z"/>
+          <path class="route-vehicle__shade" d="M3 25.3h72.8L75 29c-.4 3.2-3.1 5.5-6.3 5.5H6a3 3 0 0 1-3-3Z"/>
+          <path class="route-vehicle__highlight" d="M7 7h47.5c7.6 0 14 3.4 17.5 9.2l-3.5 1.2c-3.2-4.1-8.3-6.3-14.7-6.3H7Z"/>
+          <path class="route-vehicle__glass" d="M55.1 8.2c8.2.5 14.6 4.8 18 11.9L71.5 23H55.1Z"/>
+          <g class="route-vehicle__windows route-vehicle__windows--yufuin">
+            <rect x="10" y="9.3" width="8.2" height="9.5" rx="1.5"/>
+            <rect x="20.6" y="9.3" width="8.2" height="9.5" rx="1.5"/>
+            <rect x="31.2" y="9.3" width="8.2" height="9.5" rx="1.5"/>
+            <rect x="41.8" y="9.3" width="8.2" height="9.5" rx="1.5"/>
+          </g>
+          <path class="route-vehicle__accent route-vehicle__accent--yufuin" d="M4.5 24.6h64.2c2.8 0 5.1-.5 6.8-1.4"/>
+          <path class="route-vehicle__door route-vehicle__door--yufuin" d="M50.8 9v18.5M48.8 9h4"/>
+          <circle class="route-vehicle__crest" cx="47.7" cy="23" r="2.1"/>
+          <path class="route-vehicle__undercarriage" d="M14 32.5h49l-2.1 2.5H16Z"/>
+          <circle class="route-vehicle__light route-vehicle__light--yufuin" cx="72.3" cy="25.2" r="1.35"/>
+          <circle class="route-vehicle__light route-vehicle__light--yufuin" cx="69.2" cy="28.4" r="1.15"/>
         </svg>`;
     }
     if (mode === "bus") {
@@ -1312,13 +1361,20 @@
     const mode = ["plane", "shinkansen", "train", "bus"].includes(leg.mode)
       ? leg.mode
       : "train";
+    const hasSupportedModel =
+      (mode === "shinkansen" && leg.vehicleModel === "n700s") ||
+      (mode === "train" && leg.vehicleModel === "yufuin-no-mori");
+    const model = hasSupportedModel ? leg.vehicleModel : mode;
     return window.L.divIcon({
       className: "route-vehicle-shell",
       html:
-        '<span class="route-vehicle route-vehicle--' + mode + '">' +
-        '<span class="route-vehicle__shadow" aria-hidden="true"></span>' +
+        '<span class="route-vehicle route-vehicle--' +
+        mode +
+        " route-vehicle--" +
+        model +
+        '">' +
         '<span class="route-vehicle__bearing"><span class="route-vehicle__model">' +
-        routeVehicleMarkup(mode) +
+        routeVehicleMarkup(mode, model) +
         "</span></span></span>",
       iconSize: [76, 56],
       iconAnchor: [38, 28],
@@ -1725,10 +1781,6 @@
       Number(leg?.playback?.endpointDwellMs) || endpointDwellDurationMs,
     );
     setMotionCameraPhase("arrival");
-    if (!cameraMatchesEndpoint(leg, "end")) {
-      state.streetMap?.stop();
-      focusRouteEndpoint(leg, "end", false);
-    }
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
@@ -1967,7 +2019,7 @@
         pane: "travelVehiclePane",
         interactive: false,
         keyboard: false,
-        title: modeLabel(leg.mode) + " travelling along the active route",
+        title: leg.label + " travelling along the active route",
       }).addTo(state.motionGroup);
       window.requestAnimationFrame(() => updateMotionVehicle(state.motionProgress));
     }
@@ -2312,15 +2364,85 @@
     moveCamera();
   }
 
+  function beginArrivalCameraTransition(leg, duration, options = {}) {
+    if (!state.playing || !state.streetMap || !leg || !state.motionRoute) {
+      return false;
+    }
+
+    cancelMotionCameraPreparation();
+    state.streetMap.stop();
+
+    if (options.clampToLead) {
+      const arrivalElapsed = Math.max(0, duration - routeArrivalLeadMs(duration));
+      state.motionElapsedMs = Math.min(state.motionElapsedMs, arrivalElapsed);
+      state.motionProgress = Math.min(1, state.motionElapsedMs / duration);
+      updateMotionVehicle(state.motionProgress);
+    }
+
+    state.motionStartedAt = null;
+    state.cameraPreparing = true;
+    setMotionCameraPhase("arrival");
+    renderPlaybackState();
+    updateStreetStyles();
+
+    const token = state.motionResumeToken;
+    const legId = leg.id;
+    const remaining = Math.max(0, duration - state.motionElapsedMs);
+    const transitionDuration = Math.min(
+      0.95,
+      Math.max(0.45, remaining / 1000 * 0.82),
+    );
+    const resumeFinalApproach = () => {
+      if (
+        token !== state.motionResumeToken ||
+        !state.playing ||
+        activeLeg()?.id !== legId
+      ) return;
+      state.cameraPreparing = false;
+      if (state.motionProgress >= 1) {
+        beginEndpointDwell(leg, duration);
+        return;
+      }
+      renderPlaybackState();
+      updateStreetStyles();
+      requestMotionFrame();
+    };
+
+    if (cameraMatchesEndpoint(leg, "end")) {
+      focusRouteEndpoint(leg, "end", false);
+      window.requestAnimationFrame(resumeFinalApproach);
+      return true;
+    }
+
+    runPlaybackCameraTransition(
+      token,
+      legId,
+      () => focusRouteEndpoint(leg, "end", !reducedMotion, transitionDuration),
+      resumeFinalApproach,
+      Math.ceil(transitionDuration * 1000) + 450,
+    );
+    return true;
+  }
+
   function preparePlaybackCamera() {
     const leg = activeLeg();
     if (!state.playing || !state.streetMap || !leg || !state.motionRoute) return;
+    const duration = motionDuration(leg);
+    const remaining = Math.max(0, duration - state.motionElapsedMs);
+    if (
+      state.motionProgress > 0.001 &&
+      (
+        state.motionCameraPhase === "arrival" ||
+        remaining <= routeArrivalLeadMs(duration) + 1
+      )
+    ) {
+      beginArrivalCameraTransition(leg, duration);
+      return;
+    }
     cancelMotionCameraPreparation();
     state.streetMap.stop();
     const token = state.motionResumeToken;
     const legId = leg.id;
-    const duration = motionDuration(leg);
-    const remaining = Math.max(0, duration - state.motionElapsedMs);
     state.cameraPreparing = true;
     renderPlaybackState();
     updateStreetStyles();
@@ -2380,18 +2502,6 @@
       return;
     }
 
-    if (remaining <= routeArrivalLeadMs(duration)) {
-      setMotionCameraPhase("arrival");
-      runPlaybackCameraTransition(
-        token,
-        legId,
-        () => focusRouteEndpoint(leg, "end", !reducedMotion, 0.62),
-        resumeMotion,
-        850,
-      );
-      return;
-    }
-
     setMotionCameraPhase("overview");
     runPlaybackCameraTransition(
       token,
@@ -2407,15 +2517,14 @@
       !state.playing ||
       state.cameraPreparing ||
       state.motionCameraPhase === "arrival"
-    ) return;
+    ) return false;
     const remaining = Math.max(0, duration - state.motionElapsedMs);
-    if (remaining > routeArrivalLeadMs(duration)) return;
-    setMotionCameraPhase("arrival");
-    const transitionDuration = Math.min(
-      0.95,
-      Math.max(0.45, remaining / 1000 * 0.82),
+    if (remaining > routeArrivalLeadMs(duration)) return false;
+    return beginArrivalCameraTransition(
+      leg,
+      duration,
+      { clampToLead: true },
     );
-    focusRouteEndpoint(leg, "end", !reducedMotion, transitionDuration);
   }
 
   function pausePlaybackForMapInteraction() {
@@ -2605,13 +2714,18 @@
   }
 
   function requestMotionFrame() {
-    if (!state.playing || state.endpointDwelling || state.motionFrame !== null) return;
+    if (
+      !state.playing ||
+      state.endpointDwelling ||
+      state.cameraPreparing ||
+      state.motionFrame !== null
+    ) return;
     state.motionFrame = window.requestAnimationFrame(runMotionFrame);
   }
 
   function runMotionFrame(timestamp) {
     state.motionFrame = null;
-    if (!state.playing || state.endpointDwelling) return;
+    if (!state.playing || state.endpointDwelling || state.cameraPreparing) return;
     const leg = activeLeg();
     if (!leg || !state.motionRoute) {
       stopPlayback();
@@ -2632,7 +2746,7 @@
       state.motionLastPaintAt = timestamp;
       updateMotionVehicle(state.motionProgress);
     }
-    updatePlaybackCamera(leg, duration);
+    if (updatePlaybackCamera(leg, duration)) return;
 
     if (state.motionProgress >= 1) {
       beginEndpointDwell(leg, duration);

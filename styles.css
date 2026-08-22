@@ -923,20 +923,6 @@ a:focus-visible {
   transform: translateZ(0);
 }
 
-.route-vehicle__shadow {
-  position: absolute;
-  top: 60%;
-  left: 50%;
-  width: 48px;
-  height: 13px;
-  border-radius: 50%;
-  background: radial-gradient(ellipse, rgba(7, 16, 25, 0.52), rgba(7, 16, 25, 0) 70%);
-  opacity: 0.78;
-  transform: translate(-50%, -50%) rotate(var(--vehicle-angle, 0deg)) scale(0.9);
-  transform-origin: center;
-  will-change: transform;
-}
-
 .route-vehicle__bearing,
 .route-vehicle__model {
   display: grid;
@@ -955,7 +941,12 @@ a:focus-visible {
 
 .route-vehicle__model {
   transform: translateY(-4px) rotateX(18deg) rotateY(-5deg);
-  will-change: transform;
+}
+
+.route-vehicle--shinkansen .route-vehicle__model,
+.route-vehicle--train .route-vehicle__model,
+.route-vehicle--bus .route-vehicle__model {
+  transform: translateY(-2px) rotateX(8deg);
 }
 
 .route-vehicle__svg {
@@ -972,8 +963,18 @@ a:focus-visible {
 }
 
 .route-vehicle--shinkansen .route-vehicle__svg {
-  width: 66px;
-  height: 31px;
+  width: 68px;
+  height: 27px;
+}
+
+.route-vehicle--n700s .route-vehicle__svg {
+  width: 72px;
+  height: 28px;
+}
+
+.route-vehicle--train.route-vehicle--yufuin-no-mori .route-vehicle__svg {
+  width: 64px;
+  height: 29px;
 }
 
 .route-vehicle--train .route-vehicle__svg {
@@ -1007,6 +1008,22 @@ a:focus-visible {
   fill: #183b4c;
 }
 
+.route-vehicle__windows {
+  fill: #17313f;
+}
+
+.route-vehicle__door {
+  fill: none;
+  stroke: #71838d;
+  stroke-linecap: round;
+  stroke-width: 0.75;
+}
+
+.route-vehicle__undercarriage {
+  fill: #293942;
+  opacity: 0.96;
+}
+
 .route-vehicle__accent--plane {
   fill: #72d5ff;
 }
@@ -1014,8 +1031,60 @@ a:focus-visible {
 .route-vehicle__accent--shinkansen {
   fill: none;
   stroke: #1f4e8c;
-  stroke-width: 3;
+  stroke-width: 2.8;
   stroke-linecap: round;
+}
+
+.route-vehicle--n700s .route-vehicle__body {
+  fill: #f5f7f8;
+}
+
+.route-vehicle--n700s .route-vehicle__shade {
+  fill: #c7ced2;
+}
+
+.route-vehicle--n700s .route-vehicle__highlight {
+  fill: #fff;
+}
+
+.route-vehicle--yufuin-no-mori .route-vehicle__body {
+  fill: #16875b;
+  stroke: #073c2d;
+}
+
+.route-vehicle--yufuin-no-mori .route-vehicle__shade {
+  fill: #0b6245;
+}
+
+.route-vehicle--yufuin-no-mori .route-vehicle__highlight {
+  fill: #4db783;
+}
+
+.route-vehicle--yufuin-no-mori .route-vehicle__glass,
+.route-vehicle--yufuin-no-mori .route-vehicle__windows {
+  fill: #102b2a;
+}
+
+.route-vehicle__windows--yufuin {
+  stroke: rgba(213, 179, 87, 0.62);
+  stroke-width: 0.6;
+}
+
+.route-vehicle__accent--yufuin {
+  fill: none;
+  stroke: #efca60;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.route-vehicle__door--yufuin {
+  stroke: #bb9a49;
+}
+
+.route-vehicle__crest {
+  fill: #efca60;
+  stroke: #624c1d;
+  stroke-width: 0.5;
 }
 
 .route-vehicle__accent--train {
@@ -1042,28 +1111,14 @@ a:focus-visible {
   stroke-width: 0.6;
 }
 
-.route-vehicle-shell.is-moving .route-vehicle__model {
-  animation: route-vehicle-lift 900ms ease-in-out infinite;
+.route-vehicle__light--shinkansen {
+  fill: #e9fbff;
+  stroke: #677986;
 }
 
-.route-vehicle-shell.is-moving .route-vehicle__shadow {
-  animation: route-vehicle-shadow 900ms ease-in-out infinite;
-}
-
-@keyframes route-vehicle-lift {
-  0%, 100% { transform: translateY(-4px) rotateX(18deg) rotateY(-5deg); }
-  50% { transform: translateY(-7px) rotateX(21deg) rotateY(-3deg); }
-}
-
-@keyframes route-vehicle-shadow {
-  0%, 100% {
-    opacity: 0.78;
-    transform: translate(-50%, -50%) rotate(var(--vehicle-angle, 0deg)) scale(0.9);
-  }
-  50% {
-    opacity: 0.58;
-    transform: translate(-50%, -50%) rotate(var(--vehicle-angle, 0deg)) scale(0.76);
-  }
+.route-vehicle__light--yufuin {
+  fill: #ffe7a0;
+  stroke: #5b481d;
 }
 
 @keyframes street-route-flow {
@@ -1546,8 +1601,18 @@ a:focus-visible {
   }
 
   .route-vehicle--shinkansen .route-vehicle__svg {
-    width: 56px;
-    height: 27px;
+    width: 57px;
+    height: 23px;
+  }
+
+  .route-vehicle--n700s .route-vehicle__svg {
+    width: 59px;
+    height: 23px;
+  }
+
+  .route-vehicle--train.route-vehicle--yufuin-no-mori .route-vehicle__svg {
+    width: 54px;
+    height: 25px;
   }
 
   .route-vehicle--train .route-vehicle__svg {

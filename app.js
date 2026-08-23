@@ -79,7 +79,9 @@
     overviewPlaneRuntime: null,
     overviewGlobeFailed: false,
     overviewGlobeReady: false,
+    overviewAspect: 0,
     overviewLayoutKey: "",
+    overviewResizeToken: 0,
     pendingViewId: null,
     viewTransitionTimer: null,
     viewRevealTimer: null,
@@ -3604,16 +3606,33 @@
           );
           scheduleOverviewCityLabels(true);
           const layoutKey = width < height ? "portrait" : "landscape";
+          const aspect = width / height;
           const layoutChanged =
             state.overviewLayoutKey && state.overviewLayoutKey !== layoutKey;
+          const aspectChanged =
+            state.overviewAspect && Math.abs(aspect - state.overviewAspect) > 0.04;
           state.overviewLayoutKey = layoutKey;
+          if (!state.overviewAspect) state.overviewAspect = aspect;
           if (
-            layoutChanged &&
+            (layoutChanged || aspectChanged) &&
             state.overviewGlobeReady &&
             isOverview() &&
             !state.pendingViewId
           ) {
-            focusGlobe(overviewInitialView(), 450);
+            state.overviewAspect = aspect;
+            const resizeToken = ++state.overviewResizeToken;
+            const resizeDuration = layoutChanged ? 450 : 0;
+            window.requestAnimationFrame(() => {
+              if (
+                resizeToken !== state.overviewResizeToken ||
+                !state.overviewGlobeReady ||
+                !isOverview() ||
+                state.pendingViewId
+              ) return;
+              focusGlobe(overviewInitialView(), resizeDuration);
+            });
+          } else if (!state.overviewGlobeReady || !isOverview()) {
+            state.overviewAspect = aspect;
           }
         }
       };

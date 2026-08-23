@@ -1823,7 +1823,7 @@ a:focus-visible {
   }
 
   .globe-viz::after {
-    bottom: clamp(116px, 17vh, 142px);
+    bottom: clamp(8px, calc(50% - min(52vw, 203px) - 40px), 142px);
     width: min(76vw, 304px);
     height: 40px;
   }

@@ -10,6 +10,7 @@
     shinkansen: { minimum: 8000, maximum: 15000, metersPerMillisecond: 70 },
     train: { minimum: 9000, maximum: 16000, metersPerMillisecond: 18 },
     bus: { minimum: 9000, maximum: 16000, metersPerMillisecond: 10 },
+    car: { minimum: 9000, maximum: 16000, metersPerMillisecond: 12 },
   };
   const adaptiveMotionPacing = {
     plane: {
@@ -27,8 +28,7 @@
   };
   const endpointDwellDurationMs = reducedMotion ? 900 : 1800;
   const routeCameraIntroHoldMs = reducedMotion ? 80 : 280;
-  const routeCameraArrivalMinimumMs = reducedMotion ? 0 : 900;
-  const routeCameraArrivalMaximumMs = reducedMotion ? 0 : 1400;
+  const tripMapRevealDurationMs = reducedMotion ? 0 : 360;
   const tripsById = new Map(data.trips.map((trip) => [trip.id, trip]));
   const airportsById = new Map(data.overview.airports.map((airport) => [airport.id, airport]));
   const overviewFlights = data.overview.flights
@@ -80,6 +80,11 @@
     overviewGlobeFailed: false,
     overviewGlobeReady: false,
     overviewLayoutKey: "",
+    pendingViewId: null,
+    viewTransitionTimer: null,
+    viewRevealTimer: null,
+    viewRevealCleanup: null,
+    viewTransitionToken: 0,
     mapFocus: "all",
     globe: null,
     streetMap: null,
@@ -107,6 +112,7 @@
     endpointDwellToken: 0,
     endpointDwellDeadlineAt: 0,
     endpointDwellRemainingMs: 0,
+    playbackCompleted: false,
     cameraPreparing: false,
     streetTripId: null,
     markerLayers: new Map(),
@@ -201,6 +207,8 @@
   function markerColor(item) {
     if (item.kind === "airport") return "#3388ff";
     if (item.kind === "station") return "#ffc85b";
+    if (item.kind === "bus-station") return "#b794f6";
+    if (item.kind === "parking") return "#24282c";
     if (item.kind === "restaurant") return "#f28c5c";
     return "#68dbb0";
   }
@@ -208,6 +216,8 @@
   function markerKindLabel(item) {
     if (item.kind === "airport") return "Airport";
     if (item.kind === "station") return "Train station";
+    if (item.kind === "bus-station") return "Bus terminal";
+    if (item.kind === "parking") return "Parking";
     if (item.kind === "restaurant") return "Restaurant";
     if (item.kind === "city") return "Visited area";
     return "Saved place";
@@ -250,18 +260,43 @@
     );
   }
 
+  function globeCityLabelElement(city) {
+    const label = document.createElement("span");
+    label.className = "globe-city-label";
+    label.textContent = city.name;
+    label.setAttribute("aria-hidden", "true");
+    return label;
+  }
+
   function renderTripTabs() {
+    const focusedViewId = elements.tripTabs.contains(document.activeElement)
+      ? document.activeElement.dataset.viewId
+      : null;
     elements.tripTabs.replaceChildren(
       ...data.trips.map((view) => {
+        const pending = view.id === state.pendingViewId;
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "trip-tab" + (view.id === state.viewId ? " is-active" : "");
+        button.className =
+          "trip-tab" +
+          (view.id === state.viewId ? " is-active" : "") +
+          (pending ? " is-pending" : "");
         button.textContent = view.shortName;
+        button.dataset.viewId = view.id;
         button.setAttribute("aria-pressed", String(view.id === state.viewId));
+        if (pending) button.setAttribute("aria-busy", "true");
         button.addEventListener("click", () => selectView(view.id));
         return button;
       }),
     );
+    if (state.pendingViewId) elements.tripTabs.setAttribute("aria-busy", "true");
+    else elements.tripTabs.removeAttribute("aria-busy");
+    if (focusedViewId) {
+      const focusedButton = [...elements.tripTabs.children].find(
+        (button) => button.dataset.viewId === focusedViewId,
+      );
+      focusWithoutScroll(focusedButton);
+    }
     keepSelectedControlVisible(elements.tripTabs);
   }
 
@@ -326,12 +361,16 @@
     }
 
     elements.transportSection.hidden = false;
-    const usedKinds = new Set(trip.stops.map((stop) => stop.kind));
+    const usedKinds = new Set(
+      trip.stops.filter((stop) => !stop.routeOnly).map((stop) => stop.kind),
+    );
     const usedModes = [...new Set(trip.legs.map((leg) => leg.mode))];
     const items = [];
     if (usedKinds.has("airport")) items.push(legendItem("Airport", markerColor({ kind: "airport" })));
     if (usedKinds.has("place")) items.push(legendItem("Saved place", markerColor({ kind: "place" })));
     if (usedKinds.has("station")) items.push(legendItem("Train station", markerColor({ kind: "station" })));
+    if (usedKinds.has("bus-station")) items.push(legendItem("Bus terminal", markerColor({ kind: "bus-station" })));
+    if (usedKinds.has("parking")) items.push(legendItem("Parking", markerColor({ kind: "parking" })));
     if (usedKinds.has("restaurant")) items.push(legendItem("Restaurant", markerColor({ kind: "restaurant" })));
     usedModes.forEach((mode) => items.push(legendItem(modeLabel(mode), modeColor(mode), "line")));
     elements.transportHeading.textContent = "Trip map";
@@ -504,17 +543,29 @@
       return;
     }
 
-    const atEndpoint = state.endpointDwelling && state.motionProgress >= 1;
+    const arrivalPending =
+      state.motionProgress >= 1 &&
+      state.motionCameraPhase === "arrival" &&
+      !state.endpointDwelling &&
+      !state.playbackCompleted;
+    const atEndpoint =
+      state.motionProgress >= 1 &&
+      (state.endpointDwelling || state.playbackCompleted);
     const moving = state.playing && !state.cameraPreparing && !atEndpoint;
     const canResume =
-      (state.motionProgress > 0 && state.motionProgress < 1) || atEndpoint;
+      (state.motionProgress > 0 && state.motionProgress < 1) ||
+      state.endpointDwelling ||
+      arrivalPending;
     elements.routeCard.classList.toggle("is-playing", state.playing);
     elements.routeCard.classList.toggle("is-at-endpoint", atEndpoint);
     elements.mapStage.classList.toggle("is-playing-route", state.playing);
     elements.routePlayIcon.textContent = state.playing ? "Ⅱ" : "▶";
     let playLabel = "Play route";
     let playAriaLabel = "Play route animation";
-    if (atEndpoint) {
+    if (state.playbackCompleted) {
+      playLabel = "Replay trip";
+      playAriaLabel = "Replay trip from the beginning";
+    } else if (state.endpointDwelling) {
       playLabel = state.playing ? "Pause at stop" : "Continue route";
       playAriaLabel = state.playing
         ? "Pause at route endpoint"
@@ -529,7 +580,9 @@
     elements.routePlayLabel.textContent = playLabel;
     elements.routePlay.setAttribute("aria-label", playAriaLabel);
     if (!state.selectedStopId) {
-      if (atEndpoint) {
+      if (state.playbackCompleted) {
+        elements.routeNote.textContent = "Trip complete — replay when ready.";
+      } else if (state.endpointDwelling) {
         elements.routeNote.textContent = state.playing
           ? "Arrived — tap the map to pause here."
           : "Arrived — continue when ready.";
@@ -600,7 +653,7 @@
     const compact = width < 600;
     const closeView = view.altitude < 1.05;
     const edgePadding = compact ? 12 : 16;
-    const maximumLabels = compact ? (closeView ? 10 : 6) : closeView ? 15 : 10;
+    const maximumLabels = compact ? (closeView ? 9 : 5) : closeView ? 15 : 10;
     const headingBounds = elements.mapHeading?.getBoundingClientRect();
     const headingExclusion =
       headingBounds?.width && headingBounds?.height
@@ -681,7 +734,8 @@
     const signature = accepted.map((city) => city.id).join("|");
     if (!force && signature === state.overviewLabelSignature) return;
     state.overviewLabelSignature = signature;
-    state.globe.labelsData(accepted);
+    state.globe.labelsData([]);
+    state.globe.htmlElementsData(accepted);
     elements.globe.dataset.cityLabels = String(accepted.length);
     elements.globe.dataset.cityLabelsTotal = String(data.overview.cities.length);
   }
@@ -1002,6 +1056,7 @@
     const geometry = createOverviewPlaneGeometry(constructors);
     const material = state.globe.globeMaterial().clone();
     material.map = null;
+    material.emissiveMap = null;
     material.bumpMap = null;
     material.alphaMap = null;
     material.color?.set("#eef9ff");
@@ -1011,6 +1066,7 @@
     if ("shininess" in material) material.shininess = 92;
     material.opacity = 1;
     material.transparent = false;
+    material.wireframe = false;
     material.depthTest = true;
     material.depthWrite = true;
     material.side = 2;
@@ -1044,7 +1100,13 @@
   function paintOverviewFlightPlanes(timestamp) {
     state.overviewPlaneFrame = null;
     const runtime = state.overviewPlaneRuntime;
-    if (!runtime || !isOverview() || document.hidden || elements.globe.hidden) return;
+    if (
+      reducedMotion ||
+      !runtime ||
+      !isOverview() ||
+      document.hidden ||
+      elements.globe.hidden
+    ) return;
 
     const compact = elements.globe.clientWidth < 821;
     const frameInterval = compact ? 1000 / 30 : 1000 / 40;
@@ -1102,6 +1164,7 @@
       !state.overviewPlaneRuntime ||
       state.overviewPlaneFrame !== null ||
       !isOverview() ||
+      reducedMotion ||
       document.hidden ||
       elements.globe.hidden
     ) {
@@ -1157,12 +1220,37 @@
   function overviewInitialView() {
     const initial = data.overview.initialView;
     const { width, height } = elements.globe.getBoundingClientRect();
-    if (!(width > 0 && height > 0) || width >= height) return { ...initial };
+    if (!(width > 0 && height > 0)) return { ...initial };
+    if (width >= height) {
+      return {
+        ...initial,
+        altitude: Math.max(initial.altitude, 1.82),
+      };
+    }
     const aspect = Math.max(0.45, Math.min(1, width / height));
     return {
       ...initial,
-      altitude: Math.min(4.2, ((1 + initial.altitude) * 1.04) / aspect - 1),
+      altitude: Math.max(
+        1.82,
+        Math.min(4.2, ((1 + initial.altitude) * 1.04) / aspect - 1),
+      ),
     };
+  }
+
+  function styleOverviewGlobe(globe) {
+    const material = globe?.globeMaterial?.();
+    if (!material) return;
+    material.color?.set("#e7fbff");
+    material.emissive?.set("#06343c");
+    material.emissiveMap = null;
+    if ("emissiveIntensity" in material) material.emissiveIntensity = 0.34;
+    material.specular?.set("#1b5961");
+    if ("shininess" in material) material.shininess = 64;
+    material.transparent = false;
+    material.opacity = 1;
+    material.depthWrite = true;
+    material.wireframe = false;
+    material.needsUpdate = true;
   }
 
   function focusGlobe(view, duration = 1050) {
@@ -1170,8 +1258,192 @@
     state.globe.pointOfView(view, reducedMotion ? 0 : duration);
   }
 
+  function tripEntryTransitionDuration() {
+    if (reducedMotion) return 0;
+    return elements.globe.clientWidth < 821 ? 760 : 900;
+  }
+
+  function scheduleTripMapReveal(tripId, token) {
+    if (reducedMotion || !state.streetMap) {
+      elements.globe.hidden = true;
+      elements.mapStage.classList.remove(
+        "is-trip-reveal-preparing",
+        "is-trip-revealing",
+      );
+      return;
+    }
+
+    if (state.viewRevealCleanup) state.viewRevealCleanup();
+    if (state.viewRevealTimer !== null) {
+      window.clearTimeout(state.viewRevealTimer);
+      state.viewRevealTimer = null;
+    }
+
+    const tiles = state.streetTiles;
+    let settled = false;
+    let fallbackTimer = null;
+    const cleanup = () => {
+      tiles?.off("load", beginReveal);
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+      if (state.viewRevealCleanup === cleanup) state.viewRevealCleanup = null;
+    };
+    const finishReveal = () => {
+      if (
+        token !== state.viewTransitionToken ||
+        state.viewId !== tripId
+      ) return;
+      elements.globe.hidden = true;
+      elements.globe.setAttribute("aria-hidden", "true");
+      elements.mapStage.classList.remove("is-trip-revealing");
+      state.viewRevealTimer = null;
+    };
+    function beginReveal() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (
+        token !== state.viewTransitionToken ||
+        state.viewId !== tripId
+      ) return;
+      elements.globe.setAttribute("aria-hidden", "true");
+      elements.streetMap.removeAttribute("aria-hidden");
+      elements.mapStage.classList.remove("is-trip-reveal-preparing");
+      elements.mapStage.classList.add("is-trip-revealing");
+      state.viewRevealTimer = window.setTimeout(
+        finishReveal,
+        tripMapRevealDurationMs,
+      );
+    }
+
+    state.viewRevealCleanup = cleanup;
+    window.requestAnimationFrame(() => {
+      if (
+        token !== state.viewTransitionToken ||
+        state.viewId !== tripId
+      ) {
+        cleanup();
+        return;
+      }
+      if (!tiles?.isLoading?.()) {
+        beginReveal();
+        return;
+      }
+      tiles.once("load", beginReveal);
+      fallbackTimer = window.setTimeout(
+        beginReveal,
+        window.innerWidth < 821 ? 700 : 480,
+      );
+    });
+  }
+
+  function cancelViewTransition(options = {}) {
+    const restoreOverview = options.restoreOverview !== false;
+    const refreshTabs = options.refreshTabs !== false;
+    const hadPendingView = Boolean(state.pendingViewId);
+    state.viewTransitionToken += 1;
+    if (state.viewTransitionTimer !== null) {
+      window.clearTimeout(state.viewTransitionTimer);
+      state.viewTransitionTimer = null;
+    }
+    if (state.viewRevealCleanup) state.viewRevealCleanup();
+    if (state.viewRevealTimer !== null) {
+      window.clearTimeout(state.viewRevealTimer);
+      state.viewRevealTimer = null;
+    }
+    state.pendingViewId = null;
+    elements.app.classList.remove("is-view-transitioning");
+    elements.mapStage.classList.remove(
+      "is-entering-trip",
+      "is-trip-reveal-preparing",
+      "is-trip-revealing",
+    );
+    elements.mapStage.removeAttribute("data-entry-target");
+    if (state.globe) state.globe.controls().enabled = true;
+    if (!isOverview()) {
+      elements.globe.hidden = true;
+      elements.globe.setAttribute("aria-hidden", "true");
+      elements.streetMap.removeAttribute("aria-hidden");
+    } else if (restoreOverview) {
+      state.overviewRotation = true;
+      state.globe?.resumeAnimation();
+      applyOverviewRotation();
+      initOverviewFlightPlanes();
+      startOverviewFlightPlanes();
+    }
+    if (refreshTabs && hadPendingView) renderTripTabs();
+  }
+
+  function finishTripEntryTransition(viewId, token) {
+    if (
+      token !== state.viewTransitionToken ||
+      state.pendingViewId !== viewId ||
+      !isOverview()
+    ) return;
+    if (state.viewTransitionTimer !== null) {
+      window.clearTimeout(state.viewTransitionTimer);
+      state.viewTransitionTimer = null;
+    }
+    state.pendingViewId = null;
+    elements.app.classList.remove("is-view-transitioning");
+    elements.mapStage.classList.remove("is-entering-trip");
+    elements.mapStage.removeAttribute("data-entry-target");
+    if (state.globe) state.globe.controls().enabled = true;
+    commitView(viewId, {
+      focusInitial: true,
+      fromGlobeTransition: true,
+      transitionToken: token,
+    });
+  }
+
+  function beginTripEntryTransition(viewId) {
+    const trip = tripsById.get(viewId);
+    if (!trip) return;
+    if (state.pendingViewId === viewId) return;
+
+    const canAnimateGlobe = Boolean(
+      !reducedMotion &&
+      state.globe &&
+      state.overviewGlobeReady &&
+      !state.overviewGlobeFailed,
+    );
+    cancelViewTransition({ restoreOverview: false });
+    if (!canAnimateGlobe) {
+      commitView(viewId, { focusInitial: true });
+      return;
+    }
+
+    if (!isOverview()) commitView(data.overview.id, { focusInitial: false });
+
+    state.pendingViewId = viewId;
+    state.overviewRotation = false;
+    elements.app.classList.add("is-view-transitioning");
+    elements.mapStage.classList.add("is-entering-trip");
+    elements.mapStage.dataset.entryTarget = trip.entryView.label;
+    renderTripTabs();
+    applyOverviewRotation();
+    state.globe.controls().enabled = false;
+
+    const duration = tripEntryTransitionDuration();
+    const token = state.viewTransitionToken;
+    focusGlobe(
+      {
+        lat: trip.entryView.lat,
+        lng: trip.entryView.lng,
+        altitude: trip.entryView.globeAltitude,
+      },
+      duration,
+    );
+    state.viewTransitionTimer = window.setTimeout(() => {
+      state.viewTransitionTimer = null;
+      window.requestAnimationFrame(() => finishTripEntryTransition(viewId, token));
+    }, duration + 60);
+  }
+
   function handleOverviewPoint(item) {
-    if (!isOverview()) return;
+    if (!isOverview() || state.pendingViewId) return;
     if (item.tripId && tripsById.has(item.tripId)) {
       selectView(item.tripId);
       return;
@@ -1193,6 +1465,8 @@
     const kind =
       stop.kind === "airport" ||
       stop.kind === "station" ||
+      stop.kind === "bus-station" ||
+      stop.kind === "parking" ||
       stop.kind === "restaurant"
         ? stop.kind
         : "place";
@@ -1239,9 +1513,13 @@
         ? "✈"
         : kind === "station"
           ? "🚆"
-          : kind === "restaurant"
-            ? "🍴"
-            : "•";
+          : kind === "bus-station"
+            ? "🚌"
+            : kind === "parking"
+              ? "P"
+            : kind === "restaurant"
+              ? "🍴"
+              : "•";
     return window.L.divIcon({
       className: "trip-marker-shell",
       html:
@@ -1330,6 +1608,67 @@
           <circle class="route-vehicle__light route-vehicle__light--yufuin" cx="69.2" cy="28.4" r="1.15"/>
         </svg>`;
     }
+    if (model === "via-venture") {
+      return `
+        <svg class="route-vehicle__svg" viewBox="0 0 100 40" aria-hidden="true">
+          <path class="route-vehicle__body route-vehicle__via-coach" d="M4 7h43v25H4a3 3 0 0 1-3-3V10a3 3 0 0 1 3-3Z"/>
+          <path class="route-vehicle__via-coach-band" d="M2 11h45v12H2Z"/>
+          <path class="route-vehicle__via-coach-shade" d="M2 24h45v8H4a3 3 0 0 1-3-3Z"/>
+          <path class="route-vehicle__via-yellow route-vehicle__via-roof-ribbon" d="M4 7h43v4H2v-1a3 3 0 0 1 2-3Z"/>
+          <g class="route-vehicle__via-coach-windows">
+            <rect x="6" y="13.2" width="7.2" height="6.3" rx="1"/>
+            <rect x="16" y="13.2" width="7.2" height="6.3" rx="1"/>
+            <rect x="26" y="13.2" width="7.2" height="6.3" rx="1"/>
+            <rect x="36" y="13.2" width="7.2" height="6.3" rx="1"/>
+          </g>
+          <path class="route-vehicle__via-coupler" d="M47 18h4v8h-4Z"/>
+          <path class="route-vehicle__body route-vehicle__via-locomotive" d="M50 7h28c7.1 0 12 3.1 14.8 9.4l4.8 3.7c1.1.8 1.5 2.1 1.1 3.4L97 29.2c-.7 2.3-2.8 3.8-5.1 3.8H50Z"/>
+          <path class="route-vehicle__via-locomotive-shade" d="M50 26.5h48l-1 2.7c-.7 2.3-2.8 3.8-5.1 3.8H50Z"/>
+          <path class="route-vehicle__via-yellow route-vehicle__via-slashes" d="M54 10h6.5L52 24h-2v-7.5Zm9 0h6.5L61 24h-6.5Zm9 0h7.2L71 24h-7.2Z"/>
+          <path class="route-vehicle__via-windshield" d="M83 10.5c4.1 1.2 7.3 4 9.4 8.4l2.3 1.8-10.2 1.4-5-8Z"/>
+          <path class="route-vehicle__via-maple" d="m78 20.5 1.4 2.8 2.8-.9-1.3 2.8 2.3 1.2-3 .4.3 3h-5l.3-3-3-.4 2.3-1.2-1.3-2.8 2.8.9Z"/>
+          <path class="route-vehicle__door" d="M81.8 9.7v18"/>
+          <path class="route-vehicle__undercarriage route-vehicle__undercarriage--via" d="M8 32h29l-2.5 3H11Zm50 0h29l-2.5 3H61Z"/>
+          <path class="route-vehicle__via-pilot" d="m87 32.5 9-2.6 2.2 4.1-10 2Z"/>
+          <circle class="route-vehicle__light route-vehicle__light--via" cx="95" cy="23.8" r="1.25"/>
+        </svg>`;
+    }
+    if (model === "honda-civic-black") {
+      return `
+        <svg class="route-vehicle__svg" viewBox="0 0 98 38" aria-hidden="true">
+          <circle class="route-vehicle__wheel route-vehicle__wheel--car" cx="24.6" cy="29.2" r="5.5"/>
+          <circle class="route-vehicle__wheel route-vehicle__wheel--car" cx="73.6" cy="29.2" r="5.5"/>
+          <circle class="route-vehicle__wheel-hub route-vehicle__wheel-hub--car" cx="24.6" cy="29.2" r="2.45"/>
+          <circle class="route-vehicle__wheel-hub route-vehicle__wheel-hub--car" cx="73.6" cy="29.2" r="2.45"/>
+          <g class="route-vehicle__civic-body" transform="translate(5.88 0) scale(.88 1)">
+            <path class="route-vehicle__body" d="M3.5 27.2v-3.6c0-2.1 1.5-3.9 3.6-4.3l10.8-2 10.6-8.6c3.4-2.8 7.7-4.2 12.2-4.2h12c5 0 9.5 1.6 13.5 4.8l7.2 5.6 14.9 2c3.8.5 6.2 2.8 6.2 6.3v3.6c0 1.3-1.1 2.4-2.4 2.4h-9.2c-.5-3.3-4-5.8-8.3-5.8s-7.8 2.5-8.3 5.8H29.6c-.5-3.3-4-5.8-8.3-5.8s-7.8 2.5-8.3 5.8H5.9c-1.3 0-2.4-.8-2.4-2Z"/>
+            <path class="route-vehicle__glass route-vehicle__glass--car" d="M27.6 16.1 33 9.8c2.1-2.2 4.8-3.3 8-3.3h4.8v9.6Zm20.6-9.6h4.3c4.4 0 8.4 1.4 11.9 4.2l6.5 5.4H48.2Z"/>
+            <path class="route-vehicle__highlight" d="M7.8 19.8 26.5 17.2h43.8l17.8 1.7M29 9.1c3.3-3.1 7.2-4.6 11.7-4.6h12c5 0 9.5 1.6 13.5 4.8"/>
+            <path class="route-vehicle__door route-vehicle__door--car" d="M47 17v11.2m22.8-11-1.3 10.7M27.2 17.7l-1 10.2"/>
+            <path class="route-vehicle__civic-sill" d="M30.5 26.8h35.1"/>
+            <path class="route-vehicle__civic-mirror" d="M67.6 14.4h7.1l-1.3 2.5h-6.2Z"/>
+            <path class="route-vehicle__civic-grille" d="m90 22.1 5.8.8-.3 3.7-7.1.8Z"/>
+            <path class="route-vehicle__light route-vehicle__light--car" d="m87.6 17.5 6.4 1.2-1.5 2.1-5.8-1Z"/>
+            <path class="route-vehicle__civic-tail" d="M3.8 20h5.6l2.5 1.9-7.8.4Z"/>
+          </g>
+        </svg>`;
+    }
+    if (mode === "car") {
+      return `
+        <svg class="route-vehicle__svg" viewBox="0 0 72 36" aria-hidden="true">
+          <path class="route-vehicle__body" d="M8 13.5h8.5l7.1-8.2h24.8c3.2 0 5.9 1.2 8 3.5l5.2 4.7h2.8c2.9 0 5.2 2.3 5.2 5.2v7.8H3.5v-7.8c0-2.9 1.6-5.2 4.5-5.2Z"/>
+          <path class="route-vehicle__shade" d="M3.5 22h65.1v4.5H3.5Z"/>
+          <path class="route-vehicle__highlight" d="M9 14.9h50.3l2.3 2.2H7.4c.3-1 1-1.8 1.6-2.2Z"/>
+          <path class="route-vehicle__glass route-vehicle__glass--car" d="M20.5 13.2 26.3 7h9.2v6.2Zm17.5 0V7h9.8c2 0 3.8.7 5.3 2.1l4.4 4.1Z"/>
+          <path class="route-vehicle__accent route-vehicle__accent--car" d="M8 20.1h53.8v2.1H8Z"/>
+          <path class="route-vehicle__door route-vehicle__door--car" d="M36.7 7.2v17.2M58.1 14v10.4"/>
+          <circle class="route-vehicle__wheel route-vehicle__wheel--car" cx="17" cy="27" r="4.7"/>
+          <circle class="route-vehicle__wheel route-vehicle__wheel--car" cx="56.5" cy="27" r="4.7"/>
+          <circle class="route-vehicle__wheel-hub route-vehicle__wheel-hub--car" cx="17" cy="27" r="1.8"/>
+          <circle class="route-vehicle__wheel-hub route-vehicle__wheel-hub--car" cx="56.5" cy="27" r="1.8"/>
+          <circle class="route-vehicle__light route-vehicle__light--car" cx="66.2" cy="18.6" r="1.4"/>
+        </svg>`;
+    }
     if (mode === "bus") {
       return `
         <svg class="route-vehicle__svg" viewBox="0 0 68 38" aria-hidden="true">
@@ -1358,12 +1697,16 @@
   }
 
   function routeVehicleIcon(leg) {
-    const mode = ["plane", "shinkansen", "train", "bus"].includes(leg.mode)
+    const mode = ["plane", "shinkansen", "train", "bus", "car"].includes(leg.mode)
       ? leg.mode
       : "train";
     const hasSupportedModel =
       (mode === "shinkansen" && leg.vehicleModel === "n700s") ||
-      (mode === "train" && leg.vehicleModel === "yufuin-no-mori");
+      (
+        mode === "train" &&
+        ["yufuin-no-mori", "via-venture"].includes(leg.vehicleModel)
+      ) ||
+      (mode === "car" && leg.vehicleModel === "honda-civic-black");
     const model = hasSupportedModel ? leg.vehicleModel : mode;
     return window.L.divIcon({
       className: "route-vehicle-shell",
@@ -1580,24 +1923,31 @@
       shinkansen: "16 7",
       train: "11 7",
       bus: "7 6",
+      car: "6 5",
     };
     return patterns[mode] || "9 7";
   }
 
   function routeStyle(leg, active, dimmed) {
-    const opacity = leg.mode === "plane"
+    const configuredOpacity = Number(leg.routeOpacity);
+    const hasConfiguredOpacity = Number.isFinite(configuredOpacity);
+    const opacity = hasConfiguredOpacity
       ? dimmed
-        ? 0.1
-        : active
-          ? 0.58
-          : 0.28
-      : dimmed
-        ? 0.2
-        : active
-          ? 0.96
-          : 0.52;
+        ? Math.min(configuredOpacity * 0.35, 0.12)
+        : configuredOpacity
+      : leg.mode === "plane"
+        ? dimmed
+          ? 0.1
+          : active
+            ? 0.58
+            : 0.28
+        : dimmed
+          ? 0.2
+          : active
+            ? 0.96
+            : 0.52;
     return {
-      color: modeColor(leg.mode),
+      color: leg.routeColor || modeColor(leg.mode),
       weight: active ? 5 : 2.7,
       opacity,
       dashArray: routeDashArray(leg.mode),
@@ -1628,7 +1978,7 @@
       state.routeLayers.clear();
       state.streetTripId = trip.id;
 
-      const markers = trip.stops.map((stop) => {
+      const markers = trip.stops.filter((stop) => !stop.routeOnly).map((stop) => {
         const marker = window.L.marker([stop.lat, stop.lng], {
           icon: stopIcon(stop),
           keyboard: true,
@@ -1766,6 +2116,18 @@
       state.endpointDwellTimer = null;
       state.endpointDwellDeadlineAt = 0;
       state.endpointDwellRemainingMs = 0;
+      const trip = currentTrip();
+      const isFinalLeg = state.activeLegIndex === trip.legs.length - 1;
+      if (isFinalLeg) {
+        state.endpointDwelling = false;
+        state.playing = false;
+        state.playbackCompleted = true;
+        state.motionStartedAt = null;
+        renderRouteCard();
+        renderPlaybackState();
+        updateStreetStyles();
+        return;
+      }
       state.endpointDwelling = false;
       setActiveLeg(state.activeLegIndex + 1, { keepPlaying: true });
     }, delay);
@@ -1794,6 +2156,7 @@
     state.motionProgress = 0;
     state.motionBearing = null;
     state.motionLastPaintAt = 0;
+    state.playbackCompleted = false;
     setMotionCameraPhase("idle");
     elements.routeProgress.style.setProperty("--motion-progress", "0");
   }
@@ -2005,10 +2368,15 @@
 
     if (!state.motionMarker || !state.motionTrail) {
       const start = state.motionRoute.points[0];
+      const configuredTrailOpacity = Number(leg.routeOpacity);
       state.motionTrail = window.L.polyline([start, start], {
-        color: modeColor(leg.mode),
+        color: leg.routeColor || modeColor(leg.mode),
         weight: 6.5,
-        opacity: leg.mode === "plane" ? 0.62 : 0.94,
+        opacity: Number.isFinite(configuredTrailOpacity)
+          ? configuredTrailOpacity
+          : leg.mode === "plane"
+            ? 0.62
+            : 0.94,
         lineCap: "round",
         lineJoin: "round",
         interactive: false,
@@ -2051,9 +2419,11 @@
         { role: "End", stop: stops.get(leg.to), coordinates: coordinates.at(-1) },
       ];
       endpoints.forEach((endpoint) => {
+        const endpointInteractive = !endpoint.stop.routeOnly;
         const marker = window.L.marker(endpoint.coordinates, {
           icon: stopIcon(endpoint.stop, false, true),
-          keyboard: true,
+          interactive: endpointInteractive,
+          keyboard: endpointInteractive,
           riseOnHover: true,
           title: endpoint.role + ": " + endpoint.stop.name,
           alt: endpoint.role + ": " + endpoint.stop.name,
@@ -2068,7 +2438,9 @@
             permanent: true,
           },
         );
-        marker.on("click", () => selectStop(endpoint.stop.id, marker.getElement()));
+        if (endpointInteractive) {
+          marker.on("click", () => selectStop(endpoint.stop.id, marker.getElement()));
+        }
         marker.addTo(state.endpointGroup);
       });
     }
@@ -2113,6 +2485,19 @@
       animate: animate && !reducedMotion,
       duration: 1,
     });
+  }
+
+  function focusTripEntry(trip, animate = true) {
+    if (!state.streetMap || !trip?.entryView) return;
+    const center = [trip.entryView.lat, trip.entryView.lng];
+    if (animate && !reducedMotion) {
+      state.streetMap.flyTo(center, trip.entryView.mapZoom, {
+        animate: true,
+        duration: 0.8,
+      });
+      return;
+    }
+    state.streetMap.setView(center, trip.entryView.mapZoom, { animate: false });
   }
 
   function routeCameraCoordinates(leg) {
@@ -2228,24 +2613,12 @@
     elements.mapStage.dataset.routeCamera = phase;
   }
 
-  function routeArrivalLeadMs(duration) {
-    return Math.min(
-      routeCameraArrivalMaximumMs,
-      Math.max(routeCameraArrivalMinimumMs, duration * 0.12),
-    );
-  }
-
   function focusRouteCameraForProgress(leg = activeLeg(), animate = true) {
     if (!leg || !state.motionRoute) return;
-    const duration = motionDuration(leg);
-    const remaining = Math.max(0, duration - state.motionElapsedMs);
     if (state.motionProgress <= 0.001) {
       setMotionCameraPhase("start");
       focusRouteEndpoint(leg, "start", animate);
-    } else if (
-      state.motionProgress >= 1 ||
-      remaining <= routeArrivalLeadMs(duration)
-    ) {
+    } else if (state.motionProgress >= 1) {
       setMotionCameraPhase("arrival");
       focusRouteEndpoint(leg, "end", animate);
     } else {
@@ -2364,63 +2737,57 @@
     moveCamera();
   }
 
-  function beginArrivalCameraTransition(leg, duration, options = {}) {
+  function beginArrivalCameraTransition(leg, duration) {
     if (!state.playing || !state.streetMap || !leg || !state.motionRoute) {
       return false;
     }
 
     cancelMotionCameraPreparation();
     state.streetMap.stop();
-
-    if (options.clampToLead) {
-      const arrivalElapsed = Math.max(0, duration - routeArrivalLeadMs(duration));
-      state.motionElapsedMs = Math.min(state.motionElapsedMs, arrivalElapsed);
-      state.motionProgress = Math.min(1, state.motionElapsedMs / duration);
-      updateMotionVehicle(state.motionProgress);
-    }
-
+    state.motionElapsedMs = duration;
+    state.motionProgress = 1;
     state.motionStartedAt = null;
     state.cameraPreparing = true;
     setMotionCameraPhase("arrival");
+    updateMotionVehicle(1);
     renderPlaybackState();
     updateStreetStyles();
 
     const token = state.motionResumeToken;
     const legId = leg.id;
-    const remaining = Math.max(0, duration - state.motionElapsedMs);
-    const transitionDuration = Math.min(
-      0.95,
-      Math.max(0.45, remaining / 1000 * 0.82),
-    );
-    const resumeFinalApproach = () => {
+    const transitionDuration = reducedMotion ? 0 : 0.78;
+    const finishArrival = () => {
       if (
         token !== state.motionResumeToken ||
         !state.playing ||
         activeLeg()?.id !== legId
       ) return;
       state.cameraPreparing = false;
-      if (state.motionProgress >= 1) {
-        beginEndpointDwell(leg, duration);
-        return;
-      }
-      renderPlaybackState();
-      updateStreetStyles();
-      requestMotionFrame();
+      beginEndpointDwell(leg, duration);
     };
 
-    if (cameraMatchesEndpoint(leg, "end")) {
-      focusRouteEndpoint(leg, "end", false);
-      window.requestAnimationFrame(resumeFinalApproach);
-      return true;
-    }
-
-    runPlaybackCameraTransition(
-      token,
-      legId,
-      () => focusRouteEndpoint(leg, "end", !reducedMotion, transitionDuration),
-      resumeFinalApproach,
-      Math.ceil(transitionDuration * 1000) + 450,
-    );
+    // Give the endpoint position one painted frame before the map begins its
+    // close-up. This keeps long legs from appearing to jump into place during
+    // the destination zoom on slower mobile devices.
+    window.requestAnimationFrame(() => {
+      if (
+        token !== state.motionResumeToken ||
+        !state.playing ||
+        activeLeg()?.id !== legId
+      ) return;
+      if (cameraMatchesEndpoint(leg, "end")) {
+        focusRouteEndpoint(leg, "end", false);
+        window.requestAnimationFrame(finishArrival);
+        return;
+      }
+      runPlaybackCameraTransition(
+        token,
+        legId,
+        () => focusRouteEndpoint(leg, "end", !reducedMotion, transitionDuration),
+        finishArrival,
+        Math.ceil(transitionDuration * 1000) + 450,
+      );
+    });
     return true;
   }
 
@@ -2428,14 +2795,7 @@
     const leg = activeLeg();
     if (!state.playing || !state.streetMap || !leg || !state.motionRoute) return;
     const duration = motionDuration(leg);
-    const remaining = Math.max(0, duration - state.motionElapsedMs);
-    if (
-      state.motionProgress > 0.001 &&
-      (
-        state.motionCameraPhase === "arrival" ||
-        remaining <= routeArrivalLeadMs(duration) + 1
-      )
-    ) {
+    if (state.motionProgress >= 1) {
       beginArrivalCameraTransition(leg, duration);
       return;
     }
@@ -2516,15 +2876,9 @@
     if (
       !state.playing ||
       state.cameraPreparing ||
-      state.motionCameraPhase === "arrival"
+      state.motionProgress < 1
     ) return false;
-    const remaining = Math.max(0, duration - state.motionElapsedMs);
-    if (remaining > routeArrivalLeadMs(duration)) return false;
-    return beginArrivalCameraTransition(
-      leg,
-      duration,
-      { clampToLead: true },
-    );
+    return beginArrivalCameraTransition(leg, duration);
   }
 
   function pausePlaybackForMapInteraction() {
@@ -2586,19 +2940,28 @@
   function applyOverviewRotation() {
     if (!state.globe) return;
     state.globe.controls().autoRotate =
-      isOverview() && state.overviewRotation && !document.hidden;
+      isOverview() && state.overviewRotation && !document.hidden && !reducedMotion;
     state.globe.controls().autoRotateSpeed = 0.32;
   }
 
   function activateMapView(options = {}) {
     const focusInitial = Boolean(options.focusInitial);
+    const revealFromGlobe = Boolean(
+      options.fromGlobeTransition &&
+      !reducedMotion &&
+      !elements.globe.hidden,
+    );
     elements.fallback.hidden = true;
 
     if (isOverview()) {
       elements.app.classList.add("is-overview");
       elements.app.classList.remove("is-trip");
       elements.mapStage.classList.add("is-overview");
-      elements.mapStage.classList.remove("is-trip");
+      elements.mapStage.classList.remove(
+        "is-trip",
+        "is-trip-reveal-preparing",
+        "is-trip-revealing",
+      );
       elements.globe.hidden = false;
       elements.globe.removeAttribute("aria-hidden");
       elements.streetMap.hidden = true;
@@ -2609,6 +2972,7 @@
         showMapFallback();
         return;
       }
+      if (state.globe) state.globe.controls().enabled = true;
       state.globe?.resumeAnimation();
       refreshOverviewGlobe();
       applyOverviewRotation();
@@ -2623,11 +2987,16 @@
     elements.app.classList.add("is-trip");
     elements.mapStage.classList.remove("is-overview");
     elements.mapStage.classList.add("is-trip");
-    elements.globe.hidden = true;
-    elements.globe.setAttribute("aria-hidden", "true");
+    elements.mapStage.classList.toggle("is-trip-reveal-preparing", revealFromGlobe);
+    elements.mapStage.classList.remove("is-trip-revealing");
+    elements.globe.hidden = !revealFromGlobe;
+    if (revealFromGlobe) elements.globe.removeAttribute("aria-hidden");
+    else elements.globe.setAttribute("aria-hidden", "true");
     elements.streetMap.hidden = false;
-    elements.streetMap.removeAttribute("aria-hidden");
+    if (revealFromGlobe) elements.streetMap.setAttribute("aria-hidden", "true");
+    else elements.streetMap.removeAttribute("aria-hidden");
     if (state.globe) {
+      state.globe.controls().enabled = true;
       state.globe.controls().autoRotate = false;
       state.globe.pauseAnimation();
     }
@@ -2641,15 +3010,19 @@
           setMotionCameraPhase("start");
           focusRouteEndpoint(activeLeg(trip), "start", false);
         }
-        else fitTripBounds(trip, false);
+        else focusTripEntry(trip, false);
       }
-      window.requestAnimationFrame(() => updateMotionVehicle(state.motionProgress));
+      window.requestAnimationFrame(() => {
+        updateMotionVehicle(state.motionProgress);
+        if (revealFromGlobe) {
+          scheduleTripMapReveal(trip.id, options.transitionToken);
+        }
+      });
     });
   }
 
-  function selectView(viewId) {
+  function commitView(viewId, options = {}) {
     if (viewId !== data.overview.id && !tripsById.has(viewId)) return;
-    if (viewId === state.viewId) return;
     stopPlayback({ refresh: false });
     resetMotionProgress();
     clearMotionLayers();
@@ -2667,7 +3040,23 @@
       );
       state.mapFocus = trip.legs.length ? "" : "all";
     }
-    renderAll({ focusInitial: true });
+    renderAll({
+      ...options,
+      focusInitial: options.focusInitial !== false,
+    });
+  }
+
+  function selectView(viewId) {
+    if (viewId !== data.overview.id && !tripsById.has(viewId)) return;
+    if (viewId === data.overview.id) {
+      if (isOverview() && !state.pendingViewId) return;
+      cancelViewTransition({ restoreOverview: false, refreshTabs: false });
+      commitView(viewId, { focusInitial: true });
+      return;
+    }
+    if (state.pendingViewId === viewId) return;
+    if (viewId === state.viewId && !state.pendingViewId) return;
+    beginTripEntryTransition(viewId);
   }
 
   function setActiveLeg(index, options = {}) {
@@ -2758,6 +3147,12 @@
   function startPlayback() {
     const trip = currentTrip();
     if (!trip?.legs.length) return;
+    if (state.playbackCompleted) {
+      state.playing = true;
+      state.playbackCompleted = false;
+      setActiveLeg(0, { keepPlaying: true });
+      return;
+    }
     state.selectedStopId = null;
     state.playing = true;
     if (state.endpointDwelling) {
@@ -3091,6 +3486,7 @@
           window.requestAnimationFrame(() => {
             globeReadyScheduled = false;
             if (!state.globe || state.overviewGlobeReady) return;
+            styleOverviewGlobe(state.globe);
             state.overviewGlobeReady = true;
             focusGlobe(overviewInitialView(), 0);
             initOverviewFlightPlanes();
@@ -3103,9 +3499,10 @@
       const globe = window.Globe()(elements.globe)
         .globeImageUrl(globeTextureUrl)
         .backgroundColor("rgba(0,0,0,0)")
+        .showGraticules(window.innerWidth >= 821)
         .showAtmosphere(true)
-        .atmosphereColor("#3b9fbc")
-        .atmosphereAltitude(0.12)
+        .atmosphereColor("#6ff4ff")
+        .atmosphereAltitude(0.14)
         .pointsData([])
         .pointLat("lat")
         .pointLng("lng")
@@ -3120,14 +3517,20 @@
         .labelLat("lat")
         .labelLng("lng")
         .labelText("name")
-        .labelSize(() => (elements.globe.clientWidth < 600 ? 0.68 : 0.78))
+        .labelSize(() => (elements.globe.clientWidth < 600 ? 1.18 : 0.82))
         .labelIncludeDot(false)
         .labelDotRadius(0)
         .labelAltitude(0.04)
-        .labelColor(() => "rgba(232,241,248,0.86)")
+        .labelColor(() => "rgba(232,253,255,0.96)")
         .labelResolution(2)
         .labelLabel(() => "")
         .labelsTransitionDuration(reducedMotion ? 0 : 180)
+        .htmlElementsData([])
+        .htmlLat("lat")
+        .htmlLng("lng")
+        .htmlAltitude(0.04)
+        .htmlElement(globeCityLabelElement)
+        .htmlTransitionDuration(reducedMotion ? 0 : 180)
         .arcsData([])
         .arcStartLat((flight) => flight.start.lat)
         .arcStartLng((flight) => flight.start.lng)
@@ -3153,6 +3556,7 @@
         .onZoom(() => scheduleOverviewCityLabels());
 
       state.globe = globe;
+      styleOverviewGlobe(globe);
       let globeTextureCheckAttempts = 0;
       const waitForGlobeTexture = () => {
         if (state.overviewGlobeReady || state.overviewGlobeFailed) return;
@@ -3194,6 +3598,7 @@
         const { width, height } = elements.globe.getBoundingClientRect();
         if (width > 0 && height > 0) {
           globe.width(width).height(height);
+          globe.showGraticules(width >= 821);
           globe.renderer().setPixelRatio(
             Math.min(window.devicePixelRatio || 1, width < 821 ? 1.25 : 1.55),
           );
@@ -3202,7 +3607,12 @@
           const layoutChanged =
             state.overviewLayoutKey && state.overviewLayoutKey !== layoutKey;
           state.overviewLayoutKey = layoutKey;
-          if (layoutChanged && state.overviewGlobeReady && isOverview()) {
+          if (
+            layoutChanged &&
+            state.overviewGlobeReady &&
+            isOverview() &&
+            !state.pendingViewId
+          ) {
             focusGlobe(overviewInitialView(), 450);
           }
         }
@@ -3214,10 +3624,21 @@
       const canvas = elements.globe.querySelector("canvas");
       canvas?.addEventListener("webglcontextlost", (event) => {
         event.preventDefault();
+        const pendingViewId = state.pendingViewId;
         state.overviewGlobeFailed = true;
         state.overviewGlobeReady = false;
-        stopPlayback();
         stopOverviewFlightPlanes();
+        if (pendingViewId) {
+          cancelViewTransition({ restoreOverview: false, refreshTabs: false });
+          commitView(pendingViewId, { focusInitial: true });
+          return;
+        }
+        if (!isOverview()) {
+          cancelViewTransition({ restoreOverview: false, refreshTabs: false });
+          elements.fallback.hidden = true;
+          return;
+        }
+        stopPlayback();
         showMapFallback();
       });
       canvas?.addEventListener("webglcontextrestored", () => {
@@ -3271,7 +3692,8 @@
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      if (!elements.lightbox.hidden) closeLightbox();
+      if (state.pendingViewId) cancelViewTransition();
+      else if (!elements.lightbox.hidden) closeLightbox();
       else if (!elements.gallery.hidden) closeGallery();
       else if (!isOverview() && state.selectedStopId) {
         state.selectedStopId = null;
@@ -3314,6 +3736,10 @@
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      if (state.pendingViewId) {
+        cancelViewTransition({ restoreOverview: false });
+        state.overviewRotation = true;
+      }
       state.resumeOnVisible = state.playing;
       stopPlayback();
       stopOverviewFlightPlanes();

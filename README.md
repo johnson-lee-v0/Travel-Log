@@ -29,7 +29,7 @@ keeps the complete image visible over its already-cached preview backdrop.
 Quebec archive photos use individual map markers at their recorded locations;
 photos sharing one address remain grouped in a stacked marker.
 
-Route playback places one shaded low-poly plane, Shinkansen, local-train, or bus
+Route playback places one shaded low-poly plane, Shinkansen, local-train, bus, or car
 model on the active path. The vehicle follows the same bundled coordinates as
 the visible route, rotates with its direction of travel, preserves its position
 when paused, and updates at a mobile-friendly frame rate without downloading a
@@ -42,6 +42,8 @@ when paused, and updates at a mobile-friendly frame rate without downloading a
 - `data.js` — canonical overview, flights, trips, places, photos, and transport legs
 - `app.js` — global globe, trip street maps, clustering, route playback, and galleries
 - `trip_routes/Japan_2026/rail-shapes.js` — simplified offline Shinkansen and local-train geometry
+- `trip_routes/Quebec_2026/route-shapes.js` — direction-specific Montréal and Saint-Sauveur driving geometry
+- `trip_routes/Quebec_2025/route-shapes.js` — simplified offline VIA Rail and intercity-bus geometry
 - `trip_images/<Trip>/<city>/` — optimized full-display trip photos organized for future cities
 - `trip_images/previews/<Trip>/<city>/` — lightweight map and gallery previews
 - `trip_images/globe/` — shared map imagery, including the optimized globe texture
@@ -81,6 +83,16 @@ direction-specific OpenStreetMap public-transport relations:
 The two Kyushu bus legs use simplified road geometry derived from the
 OpenStreetMap-powered OSRM route service. All bundled shapes are simplified so
 the corridors stay responsive on mobile.
+
+Quebec 2025 uses a simplified slice of the
+[VIA Rail Corridor relation](https://www.openstreetmap.org/relation/8222333)
+between Montréal and Québec City. Its return bus follows simplified road
+geometry derived from the OpenStreetMap-powered OSRM route service.
+
+Quebec 2026 uses separate outbound and return driving shapes derived with
+[OSRM](https://project-osrm.org/) from OpenStreetMap data. The locally stored
+geometry follows A-136, A-15, A-40, Autoroute des Laurentides, and each
+direction’s Montréal one-way streets without making live routing requests.
 
 The route data is available under the Open Database License; see
 [OpenStreetMap copyright and attribution](https://www.openstreetmap.org/copyright).

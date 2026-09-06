@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#071019">
+  <meta name="theme-color" content="#111315">
   <meta
     name="description"
     content="An interactive travel log showing places and transport routes across Japan and Canada."
   >
-  <title>Travel Log · Personal Atlas</title>
+  <title>Johnson’s travel log</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
@@ -19,7 +19,7 @@
     crossorigin=""
   >
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-  <link rel="stylesheet" href="./styles.css?v=20260823-44">
+  <link rel="stylesheet" href="./styles.css?v=20260905-46">
   <script defer src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
   <script
     defer
@@ -28,11 +28,12 @@
     crossorigin=""
   ></script>
   <script defer src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-  <script defer src="./trip_routes/Japan_2026/rail-shapes.js?v=20260823-44"></script>
-  <script defer src="./trip_routes/Quebec_2026/route-shapes.js?v=20260823-44"></script>
-  <script defer src="./trip_routes/Quebec_2025/route-shapes.js?v=20260823-44"></script>
-  <script defer src="./data.js?v=20260823-44"></script>
-  <script defer src="./app.js?v=20260823-44"></script>
+  <script defer src="./trip_routes/Japan_2026/rail-shapes.js?v=20260905-46"></script>
+  <script defer src="./trip_routes/Quebec_2026/route-shapes.js?v=20260905-46"></script>
+  <script defer src="./trip_routes/Quebec_2025/route-shapes.js?v=20260905-46"></script>
+  <script defer src="./trip_images/photo-sizes.js?v=20260905-46"></script>
+  <script defer src="./data.js?v=20260905-46"></script>
+  <script defer src="./app.js?v=20260905-46"></script>
 </head>
 <body>
   <a class="skip-link" href="#map-stage">Skip to map</a>
@@ -40,33 +41,51 @@
   <div class="app-shell" id="app">
     <aside class="sidebar" aria-label="Travel log controls">
       <button class="brand brand-button" id="brand-home" type="button" aria-label="Return to the travel overview">
-        <div class="brand__mark" aria-hidden="true">JL</div>
         <div>
-          <p class="eyebrow">Personal atlas</p>
-          <p class="brand__name">Travel Log</p>
+          <p class="brand__name">Johnson’s travel log</p>
+          <p class="brand__tagline">Places, photographs, and the routes between them.</p>
         </div>
       </button>
 
+      <p class="sidebar-label">Trips</p>
       <nav class="trip-tabs" id="trip-tabs" aria-label="Choose a trip"></nav>
 
-      <section class="trip-summary" aria-labelledby="trip-title">
-        <div class="trip-summary__heading">
-          <div>
-            <p class="eyebrow" id="trip-eyebrow"></p>
-            <h1 id="trip-title"></h1>
-          </div>
-          <span class="status-pill" id="trip-status"></span>
+      <section class="city-navigation" id="city-navigation" aria-labelledby="city-navigation-heading" hidden>
+        <div class="section-heading">
+          <h2 id="city-navigation-heading">Cities</h2>
         </div>
-        <p class="trip-summary__copy" id="trip-description"></p>
+        <nav class="city-list" id="city-list" aria-label="Choose an area within this trip"></nav>
       </section>
 
-      <section class="transport-legend" aria-labelledby="transport-heading">
-        <div class="section-heading">
-          <h2 id="transport-heading">Transport</h2>
-          <span>Lines shown on the map</span>
+      <article class="city-story" id="city-story" hidden>
+        <button
+          class="city-story__toggle"
+          id="city-story-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="city-story-body"
+        >
+          <img id="city-story-toggle-image" alt="" width="56" height="56">
+          <span class="city-story__toggle-copy">
+            <span class="city-story__toggle-kicker" id="city-story-toggle-kicker"></span>
+            <strong id="city-story-toggle-title"></strong>
+          </span>
+          <span class="city-story__chevron" aria-hidden="true">⌃</span>
+        </button>
+        <div class="city-story__body" id="city-story-body">
+          <button class="city-story__media" id="city-story-media" type="button">
+            <img id="city-story-image" alt="" decoding="async">
+          </button>
+          <div class="city-story__content">
+            <p class="eyebrow" id="city-story-kicker"></p>
+            <h2 id="city-story-title"></h2>
+            <p class="city-story__note" id="city-story-note"></p>
+            <p class="city-story__stats" id="city-story-stats"></p>
+            <button class="city-story__play" id="city-story-play" type="button"></button>
+          </div>
         </div>
-        <div class="legend-list" id="transport-legend"></div>
-      </section>
+      </article>
+
     </aside>
 
     <main class="map-stage is-overview" id="map-stage" aria-label="Interactive travel map">

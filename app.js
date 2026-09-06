@@ -63,6 +63,8 @@
     viewId: data.overview.id,
     activeLegIndex: 0,
     selectedStopId: null,
+    selectedAreaId: "all",
+    storyExpanded: false,
     playing: false,
     resumeOnVisible: false,
     overviewRotation: true,
@@ -138,13 +140,20 @@
     fallback: document.getElementById("map-fallback"),
     brandHome: document.getElementById("brand-home"),
     tripTabs: document.getElementById("trip-tabs"),
-    tripEyebrow: document.getElementById("trip-eyebrow"),
-    tripTitle: document.getElementById("trip-title"),
-    tripStatus: document.getElementById("trip-status"),
-    tripDescription: document.getElementById("trip-description"),
-    transportSection: document.querySelector(".transport-legend"),
-    transportHeading: document.getElementById("transport-heading"),
-    transportLegend: document.getElementById("transport-legend"),
+    cityNavigation: document.getElementById("city-navigation"),
+    cityList: document.getElementById("city-list"),
+    cityStory: document.getElementById("city-story"),
+    cityStoryToggle: document.getElementById("city-story-toggle"),
+    cityStoryToggleImage: document.getElementById("city-story-toggle-image"),
+    cityStoryToggleKicker: document.getElementById("city-story-toggle-kicker"),
+    cityStoryToggleTitle: document.getElementById("city-story-toggle-title"),
+    cityStoryMedia: document.getElementById("city-story-media"),
+    cityStoryImage: document.getElementById("city-story-image"),
+    cityStoryKicker: document.getElementById("city-story-kicker"),
+    cityStoryTitle: document.getElementById("city-story-title"),
+    cityStoryNote: document.getElementById("city-story-note"),
+    cityStoryStats: document.getElementById("city-story-stats"),
+    cityStoryPlay: document.getElementById("city-story-play"),
     mapFocus: document.getElementById("map-focus"),
     cityPlay: document.getElementById("city-play"),
     mapHeading: document.querySelector(".map-heading"),
@@ -226,7 +235,33 @@
   }
 
   function markerPhotoSource(stop) {
-    return stop.markerPhoto?.src || stop.photos?.[0]?.preview || null;
+    return stop?.markerPhoto?.src || stop?.photos?.[0]?.preview || null;
+  }
+
+  function photoDisplaySource(photo, width = 960) {
+    if (!photo) return "";
+    if (width <= 640 && photo.gallery640) return photo.gallery640;
+    if (photo.gallery960) return photo.gallery960;
+    const full = photo.full || photo.preview || "";
+    const match = full.match(/^\.\/trip_images\/(?!previews\/|display\/)(.+)\.[^/.]+$/i);
+    return match
+      ? "./trip_images/display/" + (width <= 640 ? "640" : "960") + "/" + match[1] + ".webp"
+      : full;
+  }
+
+  function photoDimensions(photo) {
+    const dimensions = window.TRAVEL_LOG_PHOTO_SIZES?.[photo?.full];
+    return {
+      width: photo?.width || dimensions?.width || 4,
+      height: photo?.height || dimensions?.height || 3,
+    };
+  }
+
+  function stopForTripCover(trip) {
+    const stops = stopMap(trip);
+    const configured = stops.get(trip?.coverStopId);
+    if (configured?.photos?.length) return configured;
+    return trip?.stops.find((stop) => !stop.routeOnly && stop.photos?.length) || null;
   }
 
   function escapeHtml(value) {
@@ -283,7 +318,23 @@
           "trip-tab" +
           (view.id === state.viewId ? " is-active" : "") +
           (pending ? " is-pending" : "");
-        button.textContent = view.shortName;
+        const coverStop = stopForTripCover(view);
+        const thumbnail = document.createElement("img");
+        thumbnail.className = "trip-tab__image";
+        thumbnail.src = markerPhotoSource(coverStop) || "";
+        thumbnail.alt = "";
+        thumbnail.width = 52;
+        thumbnail.height = 52;
+        thumbnail.loading = "eager";
+        thumbnail.decoding = "async";
+        const copy = document.createElement("span");
+        copy.className = "trip-tab__copy";
+        const name = document.createElement("strong");
+        name.textContent = view.shortName;
+        const meta = document.createElement("span");
+        meta.textContent = view.status || view.year || "Trip";
+        copy.append(name, meta);
+        button.append(thumbnail, copy);
         button.dataset.viewId = view.id;
         button.setAttribute("aria-pressed", String(view.id === state.viewId));
         if (pending) button.setAttribute("aria-busy", "true");
@@ -323,60 +374,193 @@
 
   function renderSummary() {
     if (isOverview()) {
-      elements.tripEyebrow.textContent = data.overview.eyebrow;
-      elements.tripTitle.textContent = data.overview.name;
-      elements.tripStatus.textContent = data.overview.status;
-      elements.tripDescription.textContent = data.overview.description;
-      elements.mapEyebrow.textContent = "Personal travel atlas";
-      elements.mapTitle.textContent = "Journey, in motion";
-      document.title = "Travel Log · Personal Atlas";
+      elements.mapEyebrow.textContent = "";
+      elements.mapTitle.textContent = "Johnson’s travel log";
+      document.title = "Johnson’s travel log";
       return;
     }
 
     const trip = currentTrip();
-    elements.tripEyebrow.textContent = trip.eyebrow;
-    elements.tripTitle.textContent = trip.name;
-    elements.tripStatus.textContent = trip.status;
-    elements.tripDescription.textContent = trip.description;
     elements.mapEyebrow.textContent = trip.name + " · street map";
     elements.mapTitle.textContent = trip.name;
-    document.title = "Travel Log · " + trip.name;
+    document.title = trip.name + " · Johnson’s travel log";
   }
 
-  function legendItem(label, color, type = "marker") {
-    const item = document.createElement("span");
-    item.className = "legend-item";
-    item.style.setProperty("--mode-color", color);
-    const swatch = document.createElement("span");
-    swatch.className = type === "line" ? "legend-item__line" : "legend-item__dot";
-    swatch.setAttribute("aria-hidden", "true");
-    item.append(swatch, document.createTextNode(label));
-    return item;
+  function areaStops(area, trip = currentTrip()) {
+    if (!area || !trip) return [];
+    const city = area.stopCity || area.label;
+    return trip.stops.filter((stop) => !stop.routeOnly && stop.city === city);
   }
 
-  function renderLegend() {
-    const trip = currentTrip();
-    if (isOverview() || trip?.showLegend === false) {
-      elements.transportSection.hidden = true;
-      elements.transportLegend.replaceChildren();
+  function areaForStop(stop, trip = currentTrip()) {
+    if (!stop || !trip) return null;
+    return trip.focusAreas?.find(
+      (area) => (area.stopCity || area.label) === stop.city,
+    ) || null;
+  }
+
+  function renderCityNavigation() {
+    if (isOverview()) {
+      elements.cityNavigation.hidden = true;
+      elements.cityList.replaceChildren();
       return;
     }
 
-    elements.transportSection.hidden = false;
-    const usedKinds = new Set(
-      trip.stops.filter((stop) => !stop.routeOnly).map((stop) => stop.kind),
-    );
-    const usedModes = [...new Set(trip.legs.map((leg) => leg.mode))];
-    const items = [];
-    if (usedKinds.has("airport")) items.push(legendItem("Airport", markerColor({ kind: "airport" })));
-    if (usedKinds.has("place")) items.push(legendItem("Saved place", markerColor({ kind: "place" })));
-    if (usedKinds.has("station")) items.push(legendItem("Train station", markerColor({ kind: "station" })));
-    if (usedKinds.has("bus-station")) items.push(legendItem("Bus terminal", markerColor({ kind: "bus-station" })));
-    if (usedKinds.has("parking")) items.push(legendItem("Parking", markerColor({ kind: "parking" })));
-    if (usedKinds.has("restaurant")) items.push(legendItem("Restaurant", markerColor({ kind: "restaurant" })));
-    usedModes.forEach((mode) => items.push(legendItem(modeLabel(mode), modeColor(mode), "line")));
-    elements.transportHeading.textContent = "Trip map";
-    elements.transportLegend.replaceChildren(...items);
+    const trip = currentTrip();
+    const areas = trip.focusAreas || [];
+    if (!areas.length) {
+      elements.cityNavigation.hidden = true;
+      elements.cityList.replaceChildren();
+      return;
+    }
+
+    const focusedAreaId = elements.cityList.contains(document.activeElement)
+      ? document.activeElement.dataset.focus
+      : null;
+    elements.cityNavigation.hidden = false;
+    const allButton = document.createElement("button");
+    allButton.type = "button";
+    allButton.className =
+      "city-list__button" + (state.selectedAreaId === "all" ? " is-active" : "");
+    allButton.dataset.focus = "all";
+    allButton.setAttribute("aria-pressed", String(state.selectedAreaId === "all"));
+    const allLabel = document.createElement("span");
+    allLabel.textContent = "All destinations";
+    const allCount = document.createElement("small");
+    allCount.textContent = areas.length + (areas.length === 1 ? " city" : " cities");
+    allButton.append(allLabel, allCount);
+
+    const areaButtons = areas.map((area) => {
+      const stops = areaStops(area, trip);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className =
+        "city-list__button" + (state.selectedAreaId === area.id ? " is-active" : "");
+      button.dataset.focus = area.id;
+      button.setAttribute("aria-pressed", String(state.selectedAreaId === area.id));
+      const label = document.createElement("span");
+      label.textContent = area.label;
+      const count = document.createElement("small");
+      count.textContent = stops.length + (stops.length === 1 ? " place" : " places");
+      button.append(label, count);
+      return button;
+    });
+    elements.cityList.replaceChildren(allButton, ...areaButtons);
+    if (focusedAreaId) {
+      focusWithoutScroll(
+        [...elements.cityList.children].find(
+          (button) => button.dataset.focus === focusedAreaId,
+        ),
+      );
+    }
+  }
+
+  function setStoryPhoto(image, photo, options = {}) {
+    if (!image || !photo) return;
+    const dimensions = photoDimensions(photo);
+    image.width = dimensions.width;
+    image.height = dimensions.height;
+    image.alt = options.alt || "";
+    if (options.previewOnly) {
+      image.removeAttribute("srcset");
+      image.removeAttribute("sizes");
+      image.src = photo.preview || photoDisplaySource(photo, 640);
+      return;
+    }
+    const source640 = photoDisplaySource(photo, 640);
+    const source960 = photoDisplaySource(photo, 960);
+    image.srcset = source640 + " 640w, " + source960 + " 960w";
+    image.sizes = "(max-width: 1024px) calc(100vw - 32px), 340px";
+    image.src = source640;
+  }
+
+  function formatStoryStats(placeCount, photoCount) {
+    const places = placeCount + (placeCount === 1 ? " place" : " places");
+    const photos = photoCount + (photoCount === 1 ? " photo" : " photos");
+    return places + " · " + photos;
+  }
+
+  function renderCityStory() {
+    if (isOverview()) {
+      elements.cityStory.hidden = true;
+      return;
+    }
+
+    const trip = currentTrip();
+    const stops = stopMap(trip);
+    const selectedStop = state.selectedStopId ? stops.get(state.selectedStopId) : null;
+    const selectedArea = trip.focusAreas?.find((area) => area.id === state.selectedAreaId) || null;
+    const areaPlaces = selectedArea ? areaStops(selectedArea, trip) : [];
+    const heroStop = selectedStop?.photos?.length
+      ? selectedStop
+      : selectedArea
+        ? stops.get(selectedArea.heroStopId)
+        : stopForTripCover(trip);
+    const heroPhotoIndex = selectedStop
+      ? 0
+      : selectedArea?.heroPhotoIndex || 0;
+    const heroPhoto = heroStop?.photos?.[heroPhotoIndex] || heroStop?.photos?.[0] || null;
+    const visibleStops = trip.stops.filter((stop) => !stop.routeOnly);
+    const photoCount = selectedStop
+      ? selectedStop.photos.length
+      : selectedArea
+        ? areaPlaces.reduce((count, stop) => count + (stop.photos?.length || 0), 0)
+        : visibleStops.reduce((count, stop) => count + (stop.photos?.length || 0), 0);
+    const placeCount = selectedStop ? 1 : selectedArea ? areaPlaces.length : visibleStops.length;
+    const title = selectedStop?.name || selectedArea?.label || trip.name;
+    const kicker = selectedStop
+      ? selectedStop.city + " · " + trip.name
+      : selectedArea
+        ? trip.name
+        : trip.status;
+    const note = selectedStop?.summary || selectedArea?.note || trip.description;
+    const startIndex = selectedArea
+      ? focusAreaStartLegIndex(selectedArea, trip)
+      : Math.max(0, trip.legs.findIndex((leg) => leg.id === trip.defaultLegId));
+
+    elements.cityStory.hidden = false;
+    elements.cityStory.classList.toggle("is-expanded", state.storyExpanded);
+    elements.cityStory.classList.toggle("is-trip-overview", !selectedStop && !selectedArea);
+    elements.cityStory.classList.toggle("has-photo", Boolean(heroPhoto && heroStop));
+    elements.cityStoryToggle.setAttribute("aria-expanded", String(state.storyExpanded));
+    elements.cityStoryToggleKicker.textContent = selectedStop
+      ? selectedStop.city
+      : selectedArea
+        ? trip.name
+        : trip.status || trip.year || "Trip";
+    elements.cityStoryToggleTitle.textContent = title;
+    elements.cityStoryKicker.textContent = kicker;
+    elements.cityStoryTitle.textContent = title;
+    elements.cityStoryNote.textContent = note || "";
+    elements.cityStoryNote.hidden = !note;
+    elements.cityStoryStats.textContent = formatStoryStats(placeCount, photoCount);
+
+    if (heroPhoto && heroStop) {
+      setStoryPhoto(elements.cityStoryToggleImage, heroPhoto, { previewOnly: true });
+      setStoryPhoto(elements.cityStoryImage, heroPhoto, { alt: heroStop.name });
+      elements.cityStoryToggleImage.hidden = false;
+      elements.cityStoryMedia.hidden = false;
+      elements.cityStoryMedia.dataset.stopId = heroStop.id;
+      elements.cityStoryMedia.setAttribute("aria-label", "Open photos from " + heroStop.name);
+    } else {
+      elements.cityStoryToggleImage.hidden = true;
+      elements.cityStoryMedia.hidden = true;
+      elements.cityStoryMedia.removeAttribute("data-stop-id");
+      elements.cityStoryMedia.removeAttribute("aria-label");
+      elements.cityStoryImage.removeAttribute("src");
+      elements.cityStoryImage.removeAttribute("srcset");
+    }
+
+    if (trip.legs.length && startIndex >= 0) {
+      elements.cityStoryPlay.hidden = false;
+      elements.cityStoryPlay.dataset.legIndex = String(startIndex);
+      elements.cityStoryPlay.textContent = selectedArea
+        ? "Play from " + selectedArea.label
+        : "Play trip from the beginning";
+    } else {
+      elements.cityStoryPlay.hidden = true;
+      delete elements.cityStoryPlay.dataset.legIndex;
+    }
   }
 
   function focusAreaStartLegIndex(area, trip = currentTrip()) {
@@ -399,6 +583,12 @@
     }
 
     const trip = currentTrip();
+    const focusedControl = elements.mapFocus.contains(document.activeElement)
+      ? {
+          action: document.activeElement.dataset.action,
+          focus: document.activeElement.dataset.focus,
+        }
+      : null;
     elements.mapFocus.hidden = false;
     const focusAreas = trip.focusAreas || [];
     const buttons = [];
@@ -413,10 +603,8 @@
     allButton.className = "map-focus__button" + (state.mapFocus === "all" ? " is-active" : "");
     allButton.dataset.focus = "all";
     allButton.textContent = "All";
-    allButton.setAttribute(
-      "aria-label",
-      trip.legs.length ? "Show the full trip route" : "Show all saved places",
-    );
+    allButton.setAttribute("aria-label", "Show all destinations");
+    allButton.setAttribute("aria-pressed", String(state.mapFocus === "all"));
     buttons.push(allButton);
 
     if (focusAreas.length) {
@@ -426,20 +614,35 @@
         button.className =
           "map-focus__button" + (state.mapFocus === area.id ? " is-active" : "");
         button.dataset.focus = area.id;
+        button.setAttribute("aria-pressed", String(state.mapFocus === area.id));
         button.textContent = area.label;
         buttons.push(button);
       });
     }
     elements.mapFocus.replaceChildren(...buttons);
+    if (focusedControl) {
+      focusWithoutScroll(
+        [...elements.mapFocus.children].find(
+          (button) =>
+            (focusedControl.action && button.dataset.action === focusedControl.action) ||
+            (focusedControl.focus && button.dataset.focus === focusedControl.focus),
+        ),
+      );
+    }
     keepSelectedControlVisible(elements.mapFocus);
 
     const area = focusAreas.find((item) => item.id === state.mapFocus);
-    const startIndex = area ? focusAreaStartLegIndex(area, trip) : -1;
-    if (area && startIndex >= 0) {
+    const startIndex = area
+      ? focusAreaStartLegIndex(area, trip)
+      : state.mapFocus === "all"
+        ? Math.max(0, trip.legs.findIndex((leg) => leg.id === trip.defaultLegId))
+        : -1;
+    if ((area || state.mapFocus === "all") && startIndex >= 0 && trip.legs.length) {
       elements.cityPlay.hidden = false;
       elements.cityPlay.dataset.legIndex = String(startIndex);
-      elements.cityPlay.textContent = "▶ Play from " + area.label;
-      elements.cityPlay.setAttribute("aria-label", "Play route from " + area.label);
+      const label = area ? "Play from " + area.label : "Play full trip";
+      elements.cityPlay.textContent = "▶ " + label;
+      elements.cityPlay.setAttribute("aria-label", label);
     } else {
       elements.cityPlay.hidden = true;
       delete elements.cityPlay.dataset.legIndex;
@@ -453,7 +656,7 @@
       return;
     }
 
-    if (state.mapFocus && state.mapFocus !== "all" && !state.selectedStopId) {
+    if (state.mapFocus && !state.selectedStopId) {
       elements.routeCard.hidden = true;
       return;
     }
@@ -1061,11 +1264,11 @@
     material.emissiveMap = null;
     material.bumpMap = null;
     material.alphaMap = null;
-    material.color?.set("#eef9ff");
-    material.emissive?.set("#173845");
-    if ("emissiveIntensity" in material) material.emissiveIntensity = 0.42;
-    material.specular?.set("#d9f6ff");
-    if ("shininess" in material) material.shininess = 92;
+    material.color?.set("#f2eee6");
+    material.emissive?.set("#1a2420");
+    if ("emissiveIntensity" in material) material.emissiveIntensity = 0.16;
+    material.specular?.set("#c4cec5");
+    if ("shininess" in material) material.shininess = 24;
     material.opacity = 1;
     material.transparent = false;
     material.wireframe = false;
@@ -1110,7 +1313,7 @@
       elements.globe.hidden
     ) return;
 
-    const compact = elements.globe.clientWidth < 821;
+    const compact = elements.globe.clientWidth < 1025;
     const frameInterval = compact ? 1000 / 30 : 1000 / 40;
     if (timestamp - state.overviewPlaneLastPaintAt >= frameInterval) {
       state.overviewPlaneLastPaintAt = timestamp;
@@ -1242,12 +1445,12 @@
   function styleOverviewGlobe(globe) {
     const material = globe?.globeMaterial?.();
     if (!material) return;
-    material.color?.set("#e7fbff");
-    material.emissive?.set("#06343c");
+    material.color?.set("#eef1eb");
+    material.emissive?.set("#071b18");
     material.emissiveMap = null;
-    if ("emissiveIntensity" in material) material.emissiveIntensity = 0.34;
-    material.specular?.set("#1b5961");
-    if ("shininess" in material) material.shininess = 64;
+    if ("emissiveIntensity" in material) material.emissiveIntensity = 0.16;
+    material.specular?.set("#49615a");
+    if ("shininess" in material) material.shininess = 20;
     material.transparent = false;
     material.opacity = 1;
     material.depthWrite = true;
@@ -1262,7 +1465,7 @@
 
   function tripEntryTransitionDuration() {
     if (reducedMotion) return 0;
-    return elements.globe.clientWidth < 821 ? 760 : 900;
+    return elements.globe.clientWidth < 1025 ? 760 : 900;
   }
 
   function scheduleTripMapReveal(tripId, token) {
@@ -1336,7 +1539,7 @@
       tiles.once("load", beginReveal);
       fallbackTimer = window.setTimeout(
         beginReveal,
-        window.innerWidth < 821 ? 700 : 480,
+        window.innerWidth < 1025 ? 700 : 480,
       );
     });
   }
@@ -1738,7 +1941,7 @@
     }
 
     try {
-      const compactMap = window.matchMedia("(max-width: 820px)").matches;
+      const compactMap = window.matchMedia("(max-width: 1024px)").matches;
       const map = window.L.map(elements.streetMap, {
         zoomControl: true,
         attributionControl: false,
@@ -1749,6 +1952,7 @@
       window.L.control.attribution({ position: "bottomleft", prefix: false }).addTo(map);
       const streetTiles = window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
+        className: "quiet-map-tile",
         updateWhenIdle: true,
         updateWhenZooming: false,
         keepBuffer: compactMap ? 2 : 3,
@@ -2400,6 +2604,7 @@
     const trip = currentTrip();
     if (!trip || state.streetTripId !== trip.id) return;
     const leg = activeLeg(trip);
+    const showingRoute = !state.selectedStopId && !state.mapFocus;
 
     trip.stops.forEach((stop) => {
       const marker = state.markerLayers.get(stop.id);
@@ -2413,7 +2618,7 @@
     });
 
     state.endpointGroup?.clearLayers();
-    if (!state.selectedStopId && leg && state.endpointGroup) {
+    if (showingRoute && leg && state.endpointGroup) {
       const stops = stopMap(trip);
       const coordinates = legCoordinates(leg, stops);
       const endpoints = [
@@ -2450,7 +2655,7 @@
     trip.legs.forEach((item, index) => {
       const layer = state.routeLayers.get(item.id);
       if (!layer) return;
-      const active = index === state.activeLegIndex && !state.selectedStopId;
+      const active = index === state.activeLegIndex && showingRoute;
       layer.setStyle(routeStyle(item, active, Boolean(state.selectedStopId)));
       const path = layer.getElement();
       path?.classList.toggle("is-active", active);
@@ -2460,27 +2665,33 @@
       );
       if (active) layer.bringToFront();
     });
-    syncMotionVehicle(leg);
+    syncMotionVehicle(showingRoute ? leg : null);
   }
 
   function mapPadding() {
-    const mobile = window.matchMedia("(max-width: 820px)").matches;
+    const mobile = window.matchMedia("(max-width: 1024px)").matches;
     return mobile
       ? { paddingTopLeft: [22, 64], paddingBottomRight: [22, 165] }
       : { paddingTopLeft: [32, 72], paddingBottomRight: [32, 220] };
   }
 
   function fitTripBounds(trip, animate = true) {
-    if (!state.streetMap || !trip.stops.length) return;
-    if (trip.stops.length === 1) {
+    if (!state.streetMap) return;
+    const overviewPoints = trip.focusAreas?.length
+      ? trip.focusAreas
+      : trip.stops.filter((stop) => !stop.routeOnly);
+    if (!overviewPoints.length) return;
+    if (overviewPoints.length === 1) {
       state.streetMap.flyTo(
-        [trip.stops[0].lat, trip.stops[0].lng],
+        [overviewPoints[0].lat, overviewPoints[0].lng],
         13,
         { animate: animate && !reducedMotion, duration: 0.9 },
       );
       return;
     }
-    const bounds = window.L.latLngBounds(trip.stops.map((stop) => [stop.lat, stop.lng]));
+    const bounds = window.L.latLngBounds(
+      overviewPoints.map((point) => [point.lat, point.lng]),
+    );
     state.streetMap.flyToBounds(bounds, {
       ...mapPadding(),
       maxZoom: 12,
@@ -2719,7 +2930,7 @@
       tiles.once("load", finish);
       fallbackTimer = window.setTimeout(
         finish,
-        window.innerWidth < 821 ? 550 : 350,
+        window.innerWidth < 1025 ? 550 : 350,
       );
     };
     function handleMoveEnd() {
@@ -2913,7 +3124,11 @@
     stopPlayback();
     state.selectedStopId = null;
     state.mapFocus = focus;
+    state.selectedAreaId = focus;
+    state.storyExpanded = false;
     renderMapFocus();
+    renderCityNavigation();
+    renderCityStory();
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
@@ -2933,7 +3148,9 @@
   function playFromFocusedArea() {
     const trip = currentTrip();
     const area = trip?.focusAreas?.find((item) => item.id === state.mapFocus);
-    const startIndex = focusAreaStartLegIndex(area, trip);
+    const startIndex = area
+      ? focusAreaStartLegIndex(area, trip)
+      : Math.max(0, trip?.legs.findIndex((leg) => leg.id === trip.defaultLegId));
     if (startIndex < 0) return;
     setActiveLeg(startIndex);
     startPlayback();
@@ -3008,11 +3225,10 @@
     window.requestAnimationFrame(() => {
       state.streetMap.invalidateSize({ pan: false });
       if (focusInitial) {
-        if (trip.legs.length) {
-          setMotionCameraPhase("start");
-          focusRouteEndpoint(activeLeg(trip), "start", false);
-        }
-        else focusTripEntry(trip, false);
+        setMotionCameraPhase("idle");
+        if (state.mapFocus === "all") fitTripBounds(trip, false);
+        else if (trip.entryView) focusTripEntry(trip, false);
+        else fitTripBounds(trip, false);
       }
       window.requestAnimationFrame(() => {
         updateMotionVehicle(state.motionProgress);
@@ -3031,6 +3247,8 @@
     state.viewId = viewId;
     state.selectedStopId = null;
     state.mapFocus = "all";
+    state.selectedAreaId = "all";
+    state.storyExpanded = false;
 
     if (isOverview()) {
       state.overviewRotation = true;
@@ -3040,7 +3258,7 @@
         0,
         trip.legs.findIndex((leg) => leg.id === trip.defaultLegId),
       );
-      state.mapFocus = trip.legs.length ? "" : "all";
+      state.mapFocus = "all";
     }
     renderAll({
       ...options,
@@ -3070,7 +3288,10 @@
     resetMotionProgress();
     state.selectedStopId = null;
     state.mapFocus = "";
+    state.storyExpanded = false;
     renderMapFocus();
+    renderCityNavigation();
+    renderCityStory();
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
@@ -3095,7 +3316,11 @@
     }
     state.selectedStopId = stopId;
     state.mapFocus = "";
+    state.selectedAreaId = areaForStop(stop, trip)?.id || state.selectedAreaId;
+    state.storyExpanded = false;
     renderMapFocus();
+    renderCityNavigation();
+    renderCityStory();
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
@@ -3129,7 +3354,7 @@
     const duration = motionDuration(leg);
     state.motionElapsedMs = Math.min(duration, timestamp - state.motionStartedAt);
     state.motionProgress = Math.min(1, state.motionElapsedMs / duration);
-    const frameInterval = window.innerWidth < 821 ? 1000 / 30 : 1000 / 60;
+    const frameInterval = window.innerWidth < 1025 ? 1000 / 30 : 1000 / 60;
     if (
       state.motionProgress >= 1 ||
       timestamp - state.motionLastPaintAt >= frameInterval
@@ -3218,18 +3443,27 @@
     elements.galleryTitle.textContent = stop.name;
     elements.galleryGrid.replaceChildren(
       ...stop.photos.map((photo, index) => {
+        const dimensions = photoDimensions(photo);
         const button = document.createElement("button");
         button.type = "button";
         button.className = "gallery__image-button is-loading";
+        button.style.setProperty(
+          "--photo-ratio",
+          dimensions.width + " / " + dimensions.height,
+        );
         button.setAttribute("aria-label", "Open " + stop.name + " photo " + (index + 1));
         button.addEventListener("click", () => openLightbox(index, button));
         const image = document.createElement("img");
-        image.alt = stop.name + " photo " + (index + 1);
-        image.loading = index < 4 ? "eager" : "lazy";
+        image.alt = photo.alt || stop.name + " photo " + (index + 1);
+        image.loading = index === 0 ? "eager" : "lazy";
         image.decoding = "async";
-        if (index < 4) image.fetchPriority = "high";
-        image.width = 480;
-        image.height = 480;
+        image.fetchPriority = index === 0 ? "high" : "auto";
+        image.width = dimensions.width;
+        image.height = dimensions.height;
+        image.sizes = "(max-width: 640px) calc(100vw - 32px), min(500px, 44vw)";
+        image.srcset =
+          photoDisplaySource(photo, 640) + " 640w, " +
+          photoDisplaySource(photo, 960) + " 960w";
         image.addEventListener(
           "load",
           () => button.classList.remove("is-loading"),
@@ -3243,7 +3477,7 @@
           },
           { once: true },
         );
-        image.src = photo.preview;
+        image.src = photoDisplaySource(photo, 640);
         button.append(image);
         return button;
       }),
@@ -3461,7 +3695,8 @@
   function renderAll(options = {}) {
     renderTripTabs();
     renderSummary();
-    renderLegend();
+    renderCityNavigation();
+    renderCityStory();
     renderMapFocus();
     renderRouteCard();
     renderPlaybackState();
@@ -3501,10 +3736,10 @@
       const globe = window.Globe()(elements.globe)
         .globeImageUrl(globeTextureUrl)
         .backgroundColor("rgba(0,0,0,0)")
-        .showGraticules(window.innerWidth >= 821)
+        .showGraticules(false)
         .showAtmosphere(true)
-        .atmosphereColor("#6ff4ff")
-        .atmosphereAltitude(0.14)
+        .atmosphereColor("#a8bea1")
+        .atmosphereAltitude(0.1)
         .pointsData([])
         .pointLat("lat")
         .pointLng("lng")
@@ -3593,16 +3828,16 @@
       globe.controls().maxDistance = 720;
       globe.controls().autoRotateSpeed = 0.32;
       globe.renderer().setPixelRatio(
-        Math.min(window.devicePixelRatio || 1, window.innerWidth < 821 ? 1.25 : 1.55),
+        Math.min(window.devicePixelRatio || 1, window.innerWidth < 1025 ? 1.25 : 1.5),
       );
 
       const resize = () => {
         const { width, height } = elements.globe.getBoundingClientRect();
         if (width > 0 && height > 0) {
           globe.width(width).height(height);
-          globe.showGraticules(width >= 821);
+          globe.showGraticules(false);
           globe.renderer().setPixelRatio(
-            Math.min(window.devicePixelRatio || 1, width < 821 ? 1.25 : 1.55),
+            Math.min(window.devicePixelRatio || 1, width < 1025 ? 1.25 : 1.5),
           );
           scheduleOverviewCityLabels(true);
           const layoutKey = width < height ? "portrait" : "landscape";
@@ -3682,6 +3917,25 @@
   elements.routeNext.addEventListener("click", () => setActiveLeg(state.activeLegIndex + 1));
   elements.routePlay.addEventListener("click", togglePrimaryAnimation);
   elements.cityPlay.addEventListener("click", playFromFocusedArea);
+  elements.cityList.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-focus]");
+    if (button) focusMapArea(button.dataset.focus);
+  });
+  elements.cityStoryToggle.addEventListener("click", () => {
+    state.storyExpanded = !state.storyExpanded;
+    renderCityStory();
+  });
+  elements.cityStoryMedia.addEventListener("click", () => {
+    const trip = currentTrip();
+    const stop = stopMap(trip).get(elements.cityStoryMedia.dataset.stopId);
+    if (stop?.photos?.length) openGallery(stop, elements.cityStoryMedia);
+  });
+  elements.cityStoryPlay.addEventListener("click", () => {
+    const index = Number(elements.cityStoryPlay.dataset.legIndex);
+    if (!Number.isInteger(index) || index < 0) return;
+    setActiveLeg(index);
+    startPlayback();
+  });
   elements.galleryClose.addEventListener("click", closeGallery);
   elements.lightboxClose.addEventListener("click", closeLightbox);
   elements.lightboxPrevious.addEventListener("click", () => navigateLightbox(-1));
@@ -3716,6 +3970,9 @@
       else if (!elements.gallery.hidden) closeGallery();
       else if (!isOverview() && state.selectedStopId) {
         state.selectedStopId = null;
+        state.storyExpanded = false;
+        renderCityNavigation();
+        renderCityStory();
         renderRouteCard();
         renderPlaybackState();
         updateStreetStyles();
@@ -3745,8 +4002,23 @@
       trapModalFocus(event, elements.gallery);
       return;
     }
-    if (!isOverview() && event.key === "ArrowRight") setActiveLeg(state.activeLegIndex + 1);
-    if (!isOverview() && event.key === "ArrowLeft") setActiveLeg(state.activeLegIndex - 1);
+    if (
+      event.defaultPrevented ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.target?.closest?.(
+        'button, a, input, select, textarea, summary, [contenteditable="true"], [role="button"]',
+      )
+    ) return;
+    if (!isOverview() && event.key === "ArrowRight") {
+      event.preventDefault();
+      setActiveLeg(state.activeLegIndex + 1);
+    }
+    if (!isOverview() && event.key === "ArrowLeft") {
+      event.preventDefault();
+      setActiveLeg(state.activeLegIndex - 1);
+    }
     if (!isOverview() && event.key === " ") {
       event.preventDefault();
       togglePrimaryAnimation();

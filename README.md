@@ -2,11 +2,11 @@
 
 A static, mobile-first travel map designed to run directly on GitHub Pages.
 
-The default home state is an auto-rotating globe. Airport markers are blue;
-high-level visited areas are green. Detailed saved places and local transport
-appear only after a trip is selected. The overview is intentionally not a tab:
-select the Travel Log brand on desktop or the Globe control on a trip map to
-return to it.
+The default home state is an auto-rotating globe. Airport markers are blue and
+visited city names provide lightweight geographic context. Detailed saved
+places and local transport appear only after a trip is selected. The overview
+is intentionally not a tab: select the Johnson's travel log brand on desktop or
+the Globe control on a trip map to return to it.
 
 The Japan 2026 section contains confirmed places across Tokyo, Sendai, Sapporo,
 Osaka, Kyoto, Nagoya, and the Kitakyushu group from the shared Google Maps list.
@@ -20,12 +20,13 @@ phones. Route shapes are stored with the site, so the map does not wait for a
 live routing service while a visitor is using it. Photo-preview markers open
 their trip gallery directly. Any stop with photos automatically uses its first
 preview on the map, so new Japan cities only need to follow the same folder and
-photo-data convention. Japan 2026 photos are stored as metadata-free WebP
-display copies and 320-pixel square marker previews; source JPEGs are removed
-after conversion.
+photo-data convention. Trip photos are stored as metadata-free WebP originals,
+with 320-pixel square marker previews and aspect-preserving 640/960-pixel
+display versions; source JPEGs are removed after conversion.
 
-Gallery tiles crop mixed photo shapes cleanly, while the full-screen viewer
-keeps the complete image visible over its already-cached preview backdrop.
+Gallery tiles preserve portrait and landscape proportions, while the
+full-screen viewer keeps the complete original image visible over its
+already-cached preview backdrop.
 Quebec archive photos use individual map markers at their recorded locations;
 photos sharing one address remain grouped in a stacked marker.
 
@@ -45,8 +46,11 @@ when paused, and updates at a mobile-friendly frame rate without downloading a
 - `trip_routes/Quebec_2026/route-shapes.js` — direction-specific Montréal and Saint-Sauveur driving geometry
 - `trip_routes/Quebec_2025/route-shapes.js` — simplified offline VIA Rail and intercity-bus geometry
 - `trip_images/<Trip>/<city>/` — optimized full-display trip photos organized for future cities
-- `trip_images/previews/<Trip>/<city>/` — lightweight map and gallery previews
+- `trip_images/previews/<Trip>/<city>/` — lightweight square map-marker previews
+- `trip_images/display/{640,960}/<Trip>/<city>/` — responsive, aspect-preserving gallery and sidebar images
+- `trip_images/photo-sizes.js` — generated intrinsic dimensions used to reserve each photo's layout space
 - `trip_images/globe/` — shared map imagery, including the optimized globe texture
+- `scripts/build-photo-displays.py` — regenerates responsive display photos and the size manifest from `data.js`
 
 ## Local preview
 
@@ -57,6 +61,19 @@ python3 -m http.server 8766
 ```
 
 Then open `http://127.0.0.1:8766/`.
+
+## Photo derivatives
+
+After adding a full WebP photo to `data.js`, regenerate the responsive gallery
+and sidebar copies with:
+
+```sh
+python3 scripts/build-photo-displays.py
+```
+
+The script keeps marker previews separate, preserves each photo's orientation
+and aspect ratio, and updates `trip_images/photo-sizes.js` so galleries do not
+shift while images load.
 
 ## GitHub Pages
 

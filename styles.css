@@ -2159,7 +2159,8 @@ a:focus-visible {
   .gallery__image-button:only-child,
   .gallery__image-button:last-child:nth-child(odd):not(:only-child) {
     grid-column: auto;
-    width: auto;
+    width: 100%;
+    justify-self: stretch;
   }
 }
 

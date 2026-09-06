@@ -106,7 +106,7 @@ window.TRAVEL_LOG_DATA = (() => {
     name: "Japan 2026",
     shortName: "Japan 2026",
     year: "2026",
-    coverStopId: "zuihoden",
+    coverStopId: "kinkaku-ji",
     eyebrow: "Across Japan",
     status: "Latest trip",
     description:

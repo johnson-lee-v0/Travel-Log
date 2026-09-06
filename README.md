@@ -26,7 +26,10 @@ display versions; source JPEGs are removed after conversion.
 
 Gallery tiles preserve portrait and landscape proportions, while the
 full-screen viewer keeps the complete original image visible over its
-already-cached preview backdrop.
+already-cached preview backdrop. A city story labels the exact place and photo
+count represented by its cover, with a separate action for browsing every
+photo from that city. Selected-place details stay in the sidebar; the floating
+map card is reserved for active route playback.
 Quebec archive photos use individual map markers at their recorded locations;
 photos sharing one address remain grouped in a stacked marker.
 

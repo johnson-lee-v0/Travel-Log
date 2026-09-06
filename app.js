@@ -134,6 +134,7 @@
 
   const elements = {
     app: document.getElementById("app"),
+    sidebar: document.querySelector(".sidebar"),
     mapStage: document.getElementById("map-stage"),
     globe: document.getElementById("globe-viz"),
     streetMap: document.getElementById("street-map"),
@@ -149,10 +150,12 @@
     cityStoryToggleTitle: document.getElementById("city-story-toggle-title"),
     cityStoryMedia: document.getElementById("city-story-media"),
     cityStoryImage: document.getElementById("city-story-image"),
+    cityStoryMediaLabel: document.getElementById("city-story-media-label"),
     cityStoryKicker: document.getElementById("city-story-kicker"),
     cityStoryTitle: document.getElementById("city-story-title"),
     cityStoryNote: document.getElementById("city-story-note"),
     cityStoryStats: document.getElementById("city-story-stats"),
+    cityStoryGallery: document.getElementById("city-story-gallery"),
     cityStoryPlay: document.getElementById("city-story-play"),
     mapFocus: document.getElementById("map-focus"),
     cityPlay: document.getElementById("city-play"),
@@ -336,6 +339,8 @@
         copy.append(name, meta);
         button.append(thumbnail, copy);
         button.dataset.viewId = view.id;
+        button.title = view.shortName;
+        button.setAttribute("aria-label", view.shortName + " · " + (view.status || view.year || "Trip"));
         button.setAttribute("aria-pressed", String(view.id === state.viewId));
         if (pending) button.setAttribute("aria-busy", "true");
         button.addEventListener("click", () => selectView(view.id));
@@ -397,6 +402,19 @@
     return trip.focusAreas?.find(
       (area) => (area.stopCity || area.label) === stop.city,
     ) || null;
+  }
+
+  function areaPhotoCollection(area, trip = currentTrip()) {
+    return areaStops(area, trip).flatMap((stop) => {
+      const stopPhotos = stop.photos || [];
+      return stopPhotos.map((photo, index) => ({
+        ...photo,
+        sourceStopName: stop.name,
+        alt:
+          photo.alt ||
+          stop.name + (stopPhotos.length > 1 ? " · photo " + (index + 1) : ""),
+      }));
+    });
   }
 
   function renderCityNavigation() {
@@ -491,11 +509,14 @@
     const selectedStop = state.selectedStopId ? stops.get(state.selectedStopId) : null;
     const selectedArea = trip.focusAreas?.find((area) => area.id === state.selectedAreaId) || null;
     const areaPlaces = selectedArea ? areaStops(selectedArea, trip) : [];
-    const heroStop = selectedStop?.photos?.length
-      ? selectedStop
+    const cityPhotos = selectedArea ? areaPhotoCollection(selectedArea, trip) : [];
+    const heroStop = selectedStop
+      ? selectedStop.photos?.length
+        ? selectedStop
+        : null
       : selectedArea
-        ? stops.get(selectedArea.heroStopId)
-        : stopForTripCover(trip);
+          ? stops.get(selectedArea.heroStopId)
+          : stopForTripCover(trip);
     const heroPhotoIndex = selectedStop
       ? 0
       : selectedArea?.heroPhotoIndex || 0;
@@ -504,7 +525,7 @@
     const photoCount = selectedStop
       ? selectedStop.photos.length
       : selectedArea
-        ? areaPlaces.reduce((count, stop) => count + (stop.photos?.length || 0), 0)
+        ? cityPhotos.length
         : visibleStops.reduce((count, stop) => count + (stop.photos?.length || 0), 0);
     const placeCount = selectedStop ? 1 : selectedArea ? areaPlaces.length : visibleStops.length;
     const title = selectedStop?.name || selectedArea?.label || trip.name;
@@ -536,22 +557,39 @@
     elements.cityStoryStats.textContent = formatStoryStats(placeCount, photoCount);
 
     if (heroPhoto && heroStop) {
+      const heroPhotoCount = heroStop.photos.length;
+      const heroPhotoLabel =
+        heroStop.name + " · " + heroPhotoCount + " " +
+        (heroPhotoCount === 1 ? "photo" : "photos");
       setStoryPhoto(elements.cityStoryToggleImage, heroPhoto, { previewOnly: true });
       setStoryPhoto(elements.cityStoryImage, heroPhoto, { alt: heroStop.name });
       elements.cityStoryToggleImage.hidden = false;
       elements.cityStoryMedia.hidden = false;
       elements.cityStoryMedia.dataset.stopId = heroStop.id;
-      elements.cityStoryMedia.setAttribute("aria-label", "Open photos from " + heroStop.name);
+      elements.cityStoryMediaLabel.textContent = heroPhotoLabel;
+      elements.cityStoryMedia.setAttribute("aria-label", "Open " + heroPhotoLabel);
     } else {
       elements.cityStoryToggleImage.hidden = true;
       elements.cityStoryMedia.hidden = true;
+      elements.cityStoryMediaLabel.textContent = "";
       elements.cityStoryMedia.removeAttribute("data-stop-id");
       elements.cityStoryMedia.removeAttribute("aria-label");
       elements.cityStoryImage.removeAttribute("src");
       elements.cityStoryImage.removeAttribute("srcset");
     }
 
-    if (trip.legs.length && startIndex >= 0) {
+    const showCityGallery = Boolean(!selectedStop && selectedArea && cityPhotos.length);
+    elements.cityStoryGallery.hidden = !showCityGallery;
+    if (showCityGallery) {
+      elements.cityStoryGallery.dataset.areaId = selectedArea.id;
+      elements.cityStoryGallery.textContent =
+        "View all " + selectedArea.label + " photos (" + cityPhotos.length + ")";
+    } else {
+      delete elements.cityStoryGallery.dataset.areaId;
+      elements.cityStoryGallery.textContent = "";
+    }
+
+    if (!selectedStop && trip.legs.length && startIndex >= 0) {
       elements.cityStoryPlay.hidden = false;
       elements.cityStoryPlay.dataset.legIndex = String(startIndex);
       elements.cityStoryPlay.textContent = selectedArea
@@ -561,6 +599,16 @@
       elements.cityStoryPlay.hidden = true;
       delete elements.cityStoryPlay.dataset.legIndex;
     }
+  }
+
+  function revealDesktopStory() {
+    if (window.innerWidth <= 1024 || !elements.sidebar || elements.cityStory.hidden) return;
+    window.requestAnimationFrame(() => {
+      elements.sidebar.scrollTo({
+        top: Math.max(0, elements.cityStory.offsetTop - 10),
+        behavior: reducedMotion ? "auto" : "smooth",
+      });
+    });
   }
 
   function focusAreaStartLegIndex(area, trip = currentTrip()) {
@@ -651,12 +699,7 @@
   }
 
   function renderRouteCard() {
-    if (isOverview()) {
-      elements.routeCard.hidden = true;
-      return;
-    }
-
-    if (state.mapFocus && !state.selectedStopId) {
+    if (isOverview() || state.mapFocus || state.selectedStopId) {
       elements.routeCard.hidden = true;
       return;
     }
@@ -664,50 +707,10 @@
     elements.routeCard.hidden = false;
     const trip = currentTrip();
     const stops = stopMap(trip);
-    const selectedStop = state.selectedStopId ? stops.get(state.selectedStopId) : null;
-
-    if (selectedStop) {
-      const color = markerColor(selectedStop);
-      elements.routeCard.style.setProperty("--mode-color", color);
-      elements.routeMode.style.setProperty("--mode-color", color);
-      elements.routeMode.style.removeProperty("--mode-text-color");
-      elements.routeMode.textContent = markerKindLabel(selectedStop);
-      elements.routeStep.textContent = selectedStop.photos.length
-        ? selectedStop.photos.length +
-          " photo" +
-          (selectedStop.photos.length === 1 ? "" : "s")
-        : "Saved on this trip";
-      elements.routeTitle.textContent = selectedStop.name;
-      elements.routeDetail.textContent = selectedStop.summary;
-      elements.routeNote.textContent = selectedStop.markerPhoto?.credit
-        ? selectedStop.markerPhoto.credit
-        : selectedStop.photos.length
-          ? "Select this photo marker to reopen its gallery."
-          : "Only places from the selected trip are shown.";
-      elements.routeControls.hidden = !trip.legs.length;
-      elements.routeProgress.style.setProperty("--progress", "0%");
-      return;
-    }
 
     const leg = activeLeg(trip);
     if (!leg) {
-      const stop = trip.stops[0];
-      if (!stop) {
-        elements.routeCard.hidden = true;
-        return;
-      }
-      const color = markerColor(stop);
-      elements.routeCard.style.setProperty("--mode-color", color);
-      elements.routeMode.style.setProperty("--mode-color", color);
-      elements.routeMode.style.removeProperty("--mode-text-color");
-      elements.routeMode.textContent = stop.city;
-      elements.routeStep.textContent =
-        trip.stops.length + " saved place" + (trip.stops.length === 1 ? "" : "s");
-      elements.routeTitle.textContent = stop.name;
-      elements.routeDetail.textContent = stop.summary;
-      elements.routeNote.textContent = "Select a marker or place below to explore it.";
-      elements.routeControls.hidden = true;
-      elements.routeProgress.style.setProperty("--progress", "0%");
+      elements.routeCard.hidden = true;
       return;
     }
 
@@ -3132,6 +3135,7 @@
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
+    revealDesktopStory();
 
     if (focus === "all") {
       fitTripBounds(trip);
@@ -3324,6 +3328,7 @@
     renderRouteCard();
     renderPlaybackState();
     updateStreetStyles();
+    revealDesktopStory();
     galleryOpener = state.markerLayers.get(stopId)?.getElement() || galleryOpener;
     focusStop(stop);
     if (markerPhotoSource(stop) && stop.photos.length) openGallery(stop, galleryOpener);
@@ -3439,11 +3444,13 @@
     state.galleryPhotos = stop.photos;
     state.galleryStopName = stop.name;
     state.galleryReturnFocus = opener?.focus ? opener : document.activeElement;
-    elements.galleryKicker.textContent = currentTrip().name + " · " + stop.city;
+    elements.galleryKicker.textContent =
+      stop.galleryKicker || currentTrip().name + " · " + stop.city;
     elements.galleryTitle.textContent = stop.name;
     elements.galleryGrid.replaceChildren(
       ...stop.photos.map((photo, index) => {
         const dimensions = photoDimensions(photo);
+        const photoLabel = photo.alt || stop.name;
         const button = document.createElement("button");
         button.type = "button";
         button.className = "gallery__image-button is-loading";
@@ -3451,10 +3458,13 @@
           "--photo-ratio",
           dimensions.width + " / " + dimensions.height,
         );
-        button.setAttribute("aria-label", "Open " + stop.name + " photo " + (index + 1));
+        button.setAttribute(
+          "aria-label",
+          "Open " + photoLabel + ", photo " + (index + 1) + " of " + stop.photos.length,
+        );
         button.addEventListener("click", () => openLightbox(index, button));
         const image = document.createElement("img");
-        image.alt = photo.alt || stop.name + " photo " + (index + 1);
+        image.alt = photoLabel;
         image.loading = index === 0 ? "eager" : "lazy";
         image.decoding = "async";
         image.fetchPriority = index === 0 ? "high" : "auto";
@@ -3479,12 +3489,36 @@
         );
         image.src = photoDisplaySource(photo, 640);
         button.append(image);
+        if (photo.sourceStopName) {
+          const caption = document.createElement("span");
+          caption.className = "gallery__image-caption";
+          caption.textContent = photo.sourceStopName;
+          button.append(caption);
+        }
         return button;
       }),
     );
     elements.app.inert = true;
     elements.gallery.hidden = false;
     elements.galleryClose.focus();
+  }
+
+  function openAreaGallery(area, opener = document.activeElement) {
+    const trip = currentTrip();
+    if (!area || !trip) return;
+    const photos = areaPhotoCollection(area, trip);
+    if (!photos.length) return;
+    openGallery(
+      {
+        name: area.label,
+        city: area.label,
+        photos,
+        galleryKicker:
+          trip.name + " · " + photos.length + " " +
+          (photos.length === 1 ? "photo" : "photos"),
+      },
+      opener,
+    );
   }
 
   function closeGallery() {
@@ -3511,7 +3545,9 @@
     const loadToken = state.lightboxLoadToken;
     const photo = state.galleryPhotos[index];
     const count = state.galleryPhotos.length;
-    const alt = state.galleryStopName + ", photo " + (index + 1) + " of " + count;
+    const alt =
+      (photo.alt || state.galleryStopName) +
+      ", photo " + (index + 1) + " of " + count;
 
     if (state.lightboxLoader) {
       state.lightboxLoader.onload = null;
@@ -3525,7 +3561,9 @@
       "url(" + JSON.stringify(photo.preview) + ")",
     );
     elements.lightboxTitle.textContent = state.galleryStopName + " photo viewer";
-    elements.lightboxCount.textContent = index + 1 + " of " + count;
+    elements.lightboxCount.textContent =
+      index + 1 + " of " + count +
+      (photo.sourceStopName ? " · " + photo.sourceStopName : "");
     const focusBeforeNavigationUpdate = document.activeElement;
     elements.lightboxPrevious.disabled = index === 0;
     elements.lightboxNext.disabled = index === count - 1;
@@ -3929,6 +3967,13 @@
     const trip = currentTrip();
     const stop = stopMap(trip).get(elements.cityStoryMedia.dataset.stopId);
     if (stop?.photos?.length) openGallery(stop, elements.cityStoryMedia);
+  });
+  elements.cityStoryGallery.addEventListener("click", () => {
+    const trip = currentTrip();
+    const area = trip?.focusAreas?.find(
+      (item) => item.id === elements.cityStoryGallery.dataset.areaId,
+    );
+    if (area) openAreaGallery(area, elements.cityStoryGallery);
   });
   elements.cityStoryPlay.addEventListener("click", () => {
     const index = Number(elements.cityStoryPlay.dataset.legIndex);

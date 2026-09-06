@@ -19,7 +19,7 @@
     crossorigin=""
   >
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-  <link rel="stylesheet" href="./styles.css?v=20260905-46">
+  <link rel="stylesheet" href="./styles.css?v=20260905-49">
   <script defer src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
   <script
     defer
@@ -32,8 +32,8 @@
   <script defer src="./trip_routes/Quebec_2026/route-shapes.js?v=20260905-46"></script>
   <script defer src="./trip_routes/Quebec_2025/route-shapes.js?v=20260905-46"></script>
   <script defer src="./trip_images/photo-sizes.js?v=20260905-46"></script>
-  <script defer src="./data.js?v=20260905-46"></script>
-  <script defer src="./app.js?v=20260905-46"></script>
+  <script defer src="./data.js?v=20260905-49"></script>
+  <script defer src="./app.js?v=20260905-49"></script>
 </head>
 <body>
   <a class="skip-link" href="#map-stage">Skip to map</a>
@@ -49,13 +49,6 @@
 
       <p class="sidebar-label">Trips</p>
       <nav class="trip-tabs" id="trip-tabs" aria-label="Choose a trip"></nav>
-
-      <section class="city-navigation" id="city-navigation" aria-labelledby="city-navigation-heading" hidden>
-        <div class="section-heading">
-          <h2 id="city-navigation-heading">Cities</h2>
-        </div>
-        <nav class="city-list" id="city-list" aria-label="Choose an area within this trip"></nav>
-      </section>
 
       <article class="city-story" id="city-story" hidden>
         <button
@@ -75,16 +68,27 @@
         <div class="city-story__body" id="city-story-body">
           <button class="city-story__media" id="city-story-media" type="button">
             <img id="city-story-image" alt="" decoding="async">
+            <span class="city-story__media-label" id="city-story-media-label"></span>
           </button>
           <div class="city-story__content">
             <p class="eyebrow" id="city-story-kicker"></p>
-            <h2 id="city-story-title"></h2>
+            <h2 id="city-story-title" aria-live="polite" aria-atomic="true"></h2>
             <p class="city-story__note" id="city-story-note"></p>
             <p class="city-story__stats" id="city-story-stats"></p>
-            <button class="city-story__play" id="city-story-play" type="button"></button>
+            <div class="city-story__actions">
+              <button class="city-story__gallery" id="city-story-gallery" type="button"></button>
+              <button class="city-story__play" id="city-story-play" type="button"></button>
+            </div>
           </div>
         </div>
       </article>
+
+      <section class="city-navigation" id="city-navigation" aria-labelledby="city-navigation-heading" hidden>
+        <div class="section-heading">
+          <h2 id="city-navigation-heading">Cities</h2>
+        </div>
+        <nav class="city-list" id="city-list" aria-label="Choose an area within this trip"></nav>
+      </section>
 
     </aside>
 
